@@ -29,8 +29,21 @@ const TOPICS_STORAGE_KEY = "talk_to_elvy_topics";
 const FREE_USAGE_STORAGE_KEY = "talk_to_elvy_free_usage";
 const SETTINGS_STORAGE_KEY = "talk_to_elvy_settings";
 const ROOM_TOTAL_FREE_KEY = "talk_to_elvy_total_free_used";
+
 const today = new Date().toISOString().slice(0, 10);
 const visitorKey = `talk_to_elvy_visitor_${today}`;
+
+const WELCOME_REPLY = `Hello again.
+
+Welcome to Talk to Elvy.
+
+Elvy is a calm communication companion designed to help you express thoughts, organize ideas, and move through daily situations more clearly and gently.
+
+You may write a short message whenever you feel ready.`;
+
+const FREE_END_REPLY = `We have reached the end of the free conversation for now.
+
+To continue receiving support from Elvy, please join the Daily Support room.`;
 
 const defaultTopics: Topic[] = [
   {
@@ -90,42 +103,25 @@ function sortTopics(topics: Topic[]) {
   return [...topics].sort((a, b) => a.sortOrder - b.sortOrder);
 }
 
-function createSuggestedReply(selectedTopic: string, userMessage: string, limit: number) {
-  let reply = "";
+async function getElvyAIReply(userMessage: string, limit: number) {
+  const response = await fetch("/api/talk-to-elvy", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      message: userMessage,
+      outputLimit: limit,
+    }),
+  });
 
-  if (selectedTopic === "Daily Check-in") {
-    reply = `You said:
-${userMessage}
+  const data = await response.json();
 
-Elvy:
-I’m here with you. Let’s keep this simple. What is the most important thing for you right now?`;
-  } else if (selectedTopic === "Simple Plan") {
-    reply = `You said:
-${userMessage}
-
-Elvy:
-Let’s choose one small step first. After that, we can decide what comes next.`;
-  } else if (selectedTopic === "Remember Something") {
-    reply = `You said:
-${userMessage}
-
-Elvy:
-I can help you keep this clear. Let’s make it short and easy to remember.`;
-  } else if (selectedTopic === "Write to Someone") {
-    reply = `You said:
-${userMessage}
-
-Elvy:
-Here is a calm way to say it: I wanted to share this with you clearly and kindly.`;
-  } else {
-    reply = `You said:
-${userMessage}
-
-Elvy:
-I’m here. Let’s keep it simple and take one small step.`;
+  if (!response.ok) {
+    throw new Error(data?.error || "Elvy could not reply.");
   }
 
-  return reply.slice(0, limit);
+  return String(data?.reply || "").trim();
 }
 
 export default function TalkToElvyPage() {
@@ -134,11 +130,9 @@ export default function TalkToElvyPage() {
   const [freeUsage, setFreeUsage] = useState<Record<string, number>>({});
   const [roomTotalFreeUsed, setRoomTotalFreeUsed] = useState(0);
 
-  const [showTopics, setShowTopics] = useState(false);
-  const [selectedTopic, setSelectedTopic] = useState("");
   const [userMessage, setUserMessage] = useState("");
   const [lastUserMessage, setLastUserMessage] = useState("");
-  const [reply, setReply] = useState("");
+  const [reply, setReply] = useState(WELCOME_REPLY);
   const [isThinking, setIsThinking] = useState(false);
 
   const [isAdmin, setIsAdmin] = useState(false);
@@ -183,17 +177,15 @@ export default function TalkToElvyPage() {
     setSettings(savedSettings);
     setRoomTotalFreeUsed(savedRoomTotal);
 
-    const role = localStorage.getItem("adminRole");
+    const savedRole = localStorage.getItem("adminRole");
     const room = localStorage.getItem("adminRoom");
 
+    setRole(savedRole);
     setIsAdmin(
-      role === "founder" || (role === "admin" && room === "talk-to-elvy")
+      savedRole === "founder" || (savedRole === "admin" && room === "talk-to-elvy")
     );
   }, []);
-useEffect(() => {
-  const savedRole = localStorage.getItem("adminRole");
-  setRole(savedRole);
-}, []);
+
   useEffect(() => {
     localStorage.setItem(TOPICS_STORAGE_KEY, JSON.stringify(sortTopics(topics)));
   }, [topics]);
@@ -210,31 +202,10 @@ useEffect(() => {
     localStorage.setItem(ROOM_TOTAL_FREE_KEY, String(roomTotalFreeUsed));
   }, [roomTotalFreeUsed]);
 
-  const openTopics = useMemo(
-    () => sortTopics(topics.filter((topic) => topic.isOpen)),
-    [topics]
-  );
-
-  const selectedTopicData = useMemo(
-    () => topics.find((topic) => topic.name === selectedTopic) || null,
-    [topics, selectedTopic]
-  );
-
   const visitorUsedToday = freeUsage[visitorKey] || 0;
 
-  const topicRepliesLeft = useMemo(() => {
-    if (!selectedTopicData) return 0;
-    const used = freeUsage[`${visitorKey}_${selectedTopicData.id}`] || 0;
-    return Math.max(selectedTopicData.repliesIncluded - used, 0);
-  }, [selectedTopicData, freeUsage]);
-
-  const dailyRepliesLeft = Math.max(
+  const visitorFreeTrialsLeft = Math.max(
     settings.dailyFreeRepliesPerUser - visitorUsedToday,
-    0
-  );
-
-  const roomRepliesLeft = Math.max(
-    settings.totalFreeRepliesRoom - roomTotalFreeUsed,
     0
   );
 
@@ -254,11 +225,11 @@ useEffect(() => {
     }
 
     if (settings.oneUsePerDay && visitorUsedToday >= settings.dailyFreeRepliesPerUser) {
-      return "You have used your free trial replies for today. Please come back tomorrow or continue in Daily Support.";
+      return FREE_END_REPLY;
     }
 
     if (roomTotalFreeUsed >= settings.totalFreeRepliesRoom) {
-      return "Free replies are temporarily finished. Please come back later or continue in Daily Support.";
+      return FREE_END_REPLY;
     }
 
     return "";
@@ -274,52 +245,36 @@ useEffect(() => {
     roomTotalFreeUsed,
   ]);
 
-  function selectTopic(topicName: string) {
-    setSelectedTopic(topicName);
-    setShowTopics(false);
-    setReply("");
-    setUserMessage("");
-    setLastUserMessage("");
-  }
+  async function handleSendToElvy() {
+    const cleanMessage = userMessage.trim();
 
-  function handleSendToElvy() {
-    if (!selectedTopic || !userMessage.trim() || !selectedTopicData) return;
-
-    const topicUsed = freeUsage[`${visitorKey}_${selectedTopicData.id}`] || 0;
+    if (!cleanMessage) return;
 
     if (settings.oneUsePerDay && visitorUsedToday >= settings.dailyFreeRepliesPerUser) {
-      setReply("You have used your free trial replies for today. Please come back tomorrow.");
+      setReply(FREE_END_REPLY);
       return;
     }
 
     if (roomTotalFreeUsed >= settings.totalFreeRepliesRoom) {
-      setReply("Free replies are temporarily finished. Please come back later.");
-      return;
-    }
-
-    if (topicUsed >= selectedTopicData.repliesIncluded) {
-      setReply("You have used the free replies for this topic today.");
+      setReply(FREE_END_REPLY);
       return;
     }
 
     setIsThinking(true);
     setReply("");
+    setLastUserMessage(cleanMessage);
 
-    setTimeout(() => {
-      const finalReply = createSuggestedReply(
-        selectedTopic,
-        userMessage,
-        settings.outputLimit
+    try {
+      const finalReply = await getElvyAIReply(cleanMessage, settings.outputLimit);
+
+      setReply(
+        finalReply ||
+          "I am here with you. Let us keep this simple and take one calm step together."
       );
-
-      setLastUserMessage(userMessage);
-      setReply(finalReply);
 
       setFreeUsage((prev) => ({
         ...prev,
         [visitorKey]: (prev[visitorKey] || 0) + 1,
-        [`${visitorKey}_${selectedTopicData.id}`]:
-          (prev[`${visitorKey}_${selectedTopicData.id}`] || 0) + 1,
       }));
 
       setRoomTotalFreeUsed((prev) => prev + 1);
@@ -328,8 +283,14 @@ useEffect(() => {
       setTodayCost((prev) => Number((prev + estimatedCost).toFixed(4)));
       setMonthlyCost((prev) => Number((prev + estimatedCost).toFixed(4)));
 
+      setUserMessage("");
+    } catch {
+      setReply(
+        "I am here with you. Something small went wrong, but we can still keep this calm. Please try again in a moment."
+      );
+    } finally {
       setIsThinking(false);
-    }, 900);
+    }
   }
 
   function handleCopyReply() {
@@ -461,18 +422,14 @@ useEffect(() => {
 
   function deleteTopic(topicId: string) {
     setTopics((prev) => prev.filter((topic) => topic.id !== topicId));
-
-    if (selectedTopicData?.id === topicId) {
-      setSelectedTopic("");
-      setReply("");
-      setUserMessage("");
-      setLastUserMessage("");
-    }
   }
 
   function resetFreeUsage() {
     setFreeUsage({});
     setRoomTotalFreeUsed(0);
+    setReply(WELCOME_REPLY);
+    setLastUserMessage("");
+    setUserMessage("");
     localStorage.removeItem(FREE_USAGE_STORAGE_KEY);
     localStorage.removeItem(ROOM_TOTAL_FREE_KEY);
   }
@@ -485,23 +442,23 @@ useEffect(() => {
       <div className="absolute inset-0 bg-white/10" />
 
       <div className="relative z-10 min-h-screen px-6 py-6">
-{role === "founder" ? (
-  <button
-    onClick={() => {
-      window.location.href = "/founder/dashboard";
-    }}
-    className="absolute left-[2%] top-[4%] z-30 rounded-full bg-black px-6 py-3 text-white"
-  >
-    ← Back to Dashboard
-  </button>
-) : (
-  <Link
-    href="/happy-office"
-    className="absolute left-[2%] top-[4%] z-30 rounded-full bg-black px-6 py-3 text-white"
-  >
-    ← Back to Happy Office
-  </Link>
-)}
+        {role === "founder" ? (
+          <button
+            onClick={() => {
+              window.location.href = "/founder/dashboard";
+            }}
+            className="absolute left-[2%] top-[4%] z-30 rounded-full bg-black px-6 py-3 text-white"
+          >
+            ← Back to Dashboard
+          </button>
+        ) : (
+          <Link
+            href="/happy-office"
+            className="absolute left-[2%] top-[4%] z-30 rounded-full bg-black px-6 py-3 text-white"
+          >
+            ← Back to Happy Office
+          </Link>
+        )}
 
         {isAdmin && (
           <div className="absolute right-6 top-6 z-50 flex gap-2">
@@ -523,18 +480,18 @@ useEffect(() => {
 
         <div className="absolute left-1/2 top-0 -translate-x-1/2 text-center">
           <p className="rounded-lg bg-white/60 px-6 py-2 text-lg font-medium text-stone-800 backdrop-blur">
-            Please choose from the list, then write a short message to Elvy.
+            Talk to Elvy
           </p>
         </div>
 
         {roomMessage && (
           <div className="absolute left-1/2 top-[28%] w-[430px] -translate-x-1/2 rounded-2xl bg-yellow-100 p-5 text-center text-stone-800 shadow-xl">
-            <p className="mb-4">{roomMessage}</p>
+            <p className="mb-4 whitespace-pre-line">{roomMessage}</p>
             <Link
               href="/sections/daily-support"
               className="inline-block rounded-xl bg-green-700 px-4 py-2 text-white"
             >
-              Continue in Daily Support
+              Join Daily Support
             </Link>
           </div>
         )}
@@ -548,7 +505,7 @@ useEffect(() => {
                 <div className="min-h-[250px] max-h-[340px] overflow-y-auto whitespace-pre-line rounded-lg bg-white/80 p-4 text-gray-700">
                   {isThinking
                     ? "Elvy is preparing a calm reply..."
-                    : reply || "Elvy’s reply will appear here."}
+                    : reply || WELCOME_REPLY}
                 </div>
 
                 <div className="mt-4 flex justify-center gap-4 text-sm">
@@ -583,23 +540,10 @@ useEffect(() => {
               <div className="rounded-2xl bg-white/85 p-4 shadow-lg backdrop-blur">
                 <h2 className="mb-2 font-semibold">Your Message</h2>
 
-                {selectedTopic ? (
-                  <p className="mt-1 text-sm text-stone-700">
-                    Selected: <span className="font-medium">{selectedTopic}</span>
-                  </p>
-                ) : (
-                  <p className="mt-1 text-sm text-red-600">
-                    Please select from the list first.
-                  </p>
-                )}
-
-                {selectedTopicData && (
-                  <div className="mt-1 text-xs text-stone-600">
-                    <p>Topic replies left: {topicRepliesLeft}</p>
-                    <p>Daily replies left: {dailyRepliesLeft}</p>
-                    <p>Room free replies left: {roomRepliesLeft}</p>
-                  </div>
-                )}
+                <p className="mt-1 text-sm text-stone-700">
+                  Free trials left:{" "}
+                  <span className="font-medium">{visitorFreeTrialsLeft}</span>
+                </p>
 
                 <textarea
                   value={userMessage}
@@ -608,12 +552,8 @@ useEffect(() => {
                       setUserMessage(e.target.value);
                     }
                   }}
-                  placeholder={
-                    selectedTopic
-                      ? "Write a short message..."
-                      : "Select a topic first..."
-                  }
-                  disabled={!selectedTopic || isThinking}
+                  placeholder="Write a short message..."
+                  disabled={isThinking}
                   className="mb-2 mt-3 h-40 w-full rounded border p-2 disabled:cursor-not-allowed disabled:bg-stone-100 disabled:text-stone-400"
                 />
 
@@ -632,7 +572,7 @@ useEffect(() => {
 
                 <button
                   onClick={handleSendToElvy}
-                  disabled={!selectedTopic || !userMessage.trim() || isThinking}
+                  disabled={!userMessage.trim() || isThinking}
                   className="w-full rounded bg-black p-2 text-white disabled:cursor-not-allowed disabled:bg-stone-400"
                 >
                   {isThinking ? "Processing..." : "Send to Elvy"}
@@ -644,31 +584,6 @@ useEffect(() => {
                     <div>{lastUserMessage}</div>
                   </div>
                 )}
-              </div>
-            </div>
-
-            <div className="absolute bottom-0 left-0 z-30 w-full">
-              <div className="flex flex-col items-center pb-4">
-                {showTopics && (
-                  <div className="mb-3 flex max-w-4xl flex-wrap justify-center gap-3 rounded-xl bg-white/90 p-3 shadow-lg">
-                    {openTopics.map((item) => (
-                      <button
-                        key={item.id}
-                        onClick={() => selectTopic(item.name)}
-                        className="rounded-lg bg-stone-100 px-4 py-2 text-sm text-stone-800 hover:bg-black hover:text-white"
-                      >
-                        {item.name}
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                <button
-                  onClick={() => setShowTopics(!showTopics)}
-                  className="w-80 bg-black py-3 text-center text-white"
-                >
-                  {showTopics ? "Hide list" : "Please select from the list"}
-                </button>
               </div>
             </div>
           </>
@@ -824,6 +739,9 @@ useEffect(() => {
                   <p className="text-sm">
                     Current visitor used today: {visitorUsedToday}/
                     {settings.dailyFreeRepliesPerUser}
+                  </p>
+                  <p className="text-sm">
+                    Current visitor trials left: {visitorFreeTrialsLeft}
                   </p>
 
                   <button

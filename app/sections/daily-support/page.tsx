@@ -4,6 +4,7 @@ import { Fragment, useEffect, useState } from "react";
 import Link from "next/link";
 
 type UserStatus =
+  | "Visitor"
   | "Pending"
   | "Setup Sent"
   | "In Chat"
@@ -60,19 +61,6 @@ const CODE_GEN_KEY = "dailySupportCodeGenerationOpen";
 const MAX_USER_MESSAGE_LENGTH = 300;
 
 const TELEGRAM_BOT_LINK = "https://t.me/happy_office_support_bot";
-
-const helpTypes = [
-  "Schedule Reminder",
-  "Task Follow-up",
-  "Memory Help",
-  "Medication Reminder",
-  "Daily Routine Support",
-  "Appointment Reminder",
-  "Family Check-in",
-  "Children Support",
-  "Special Needs Support",
-  "General Daily Support",
-];
 
 async function loadUsersFromServer(): Promise<SupportUser[]> {
   try {
@@ -301,7 +289,6 @@ export default function DailySupportPage() {
   const [roomOpen, setRoomOpen] = useState(true);
   const [codeGenerationOpen, setCodeGenerationOpen] = useState(true);
 
-  const [selectedHelp, setSelectedHelp] = useState("");
   const [name, setName] = useState("");
   const [ageGroup, setAgeGroup] = useState("18–30");
   const [contactMethod, setContactMethod] = useState("Telegram");
@@ -457,11 +444,6 @@ const interval = window.setInterval(async () => {
       return;
     }
 
-    if (!selectedHelp) {
-      window.alert("Please select a support type from the list first.");
-      return;
-    }
-
     if (!name.trim()) {
       window.alert("Please enter your name first.");
       return;
@@ -484,7 +466,7 @@ const interval = window.setInterval(async () => {
       code: generateCode(),
       name: name.trim(),
       ageGroup,
-      helpType: selectedHelp,
+      helpType: "General support",
       contactMethod,
       contactValue: contactMethod === "Telegram" ? cleanTelegram : contactValue.trim(),
       status: "Pending",
@@ -520,7 +502,6 @@ const interval = window.setInterval(async () => {
 
     setName("");
     setContactValue("");
-    setSelectedHelp("");
   }
 
   async function sendSetupMessage(code: string) {
@@ -819,140 +800,138 @@ const interval = window.setInterval(async () => {
         </div>
       )}
 
-      {!dashboardOpen && (
-        <section className="absolute left-[18%] top-[18%] z-20 h-[68%] w-[64%] overflow-hidden rounded-3xl bg-white/85 p-10 shadow-xl backdrop-blur">
-          <div className="h-full overflow-y-auto pr-4">
-            <h1 className="text-4xl font-bold text-[#7a3b1d]">
-              Daily Support
-            </h1>
+{!dashboardOpen && (
+  <section className="absolute left-[10%] top-[12%] z-20 h-[130%] w-[80%] overflow-hidden rounded-3xl bg-white/90 p-6 shadow-x2 backdrop-blur">
+    <div className="grid h-full grid-cols-[1.1fr_0.9fr] gap-5">
+      {/* LEFT SIDE */}
+      <div className="flex h-full flex-col justify-center overflow-hidden rounded-2xl bg-[#fffaf5] p-8 shadow">
+        <h1 className="text-4xl font-bold text-[#7a3b1d]">Daily Support</h1>
 
-            <p className="mt-4 text-lg leading-relaxed">
-              Please select from the list, enter your name, add your Telegram
-              username, then generate your code.
-            </p>
+        <p className="mt-4 text-lg font-semibold">
+          Welcome to Daily Support Room
+        </p>
 
-            <p className="mt-3 rounded-xl bg-[#f7efe6] p-4 font-semibold">
-              After generating your code, open our Telegram bot and press START:
-              <br />
-              <a
-                href={TELEGRAM_BOT_LINK}
-                target="_blank"
-                className="font-bold text-blue-700 underline"
-              >
-                {TELEGRAM_BOT_LINK}
-              </a>
-            </p>
+        <p className="mt-5 text-base font-semibold text-[#6b4428]">
+          How it works
+        </p>
 
-            {!roomOpen ? (
-              <p className="mt-6 text-xl font-bold text-red-700">
-                Daily Support is currently closed.
-              </p>
-            ) : (
-              <>
-                {!codeGenerationOpen && (
-                  <p className="mt-6 rounded-xl bg-yellow-100 p-4 font-bold text-yellow-800">
-                    New code generation is temporarily closed. Existing users who
-                    received a setup message can still enter their full access
-                    code.
-                  </p>
-                )}
+<p className="mt-2 text-base leading-relaxed text-[#6b4428]">
+  Add your details on the right to receive your access code.
+</p>
 
-                {codeGenerationOpen && (
-                  <>
-                    <div className="mt-6 grid grid-cols-2 gap-4">
-                      {helpTypes.map((help) => (
-                        <button
-                          key={help}
-                          onClick={() => setSelectedHelp(help)}
-                          className={`rounded-xl p-4 font-semibold text-white ${
-                            selectedHelp === help
-                              ? "bg-green-700"
-                              : "bg-[#7a3b1d]"
-                          }`}
-                        >
-                          {help}
-                        </button>
-                      ))}
-                    </div>
+<p className="mt-1 text-base leading-relaxed text-[#6b4428]">
+  You can also continue through Telegram:
+</p>
 
-                    <div className="mt-6 rounded-2xl bg-white/80 p-6 shadow">
-                      <h2 className="text-2xl font-bold text-[#7a3b1d]">
-                        Request Elvy Help
-                      </h2>
+<a
+  href="https://t.me/happy_office_support_bot"
+  target="_blank"
+  rel="noopener noreferrer"
+  className="mt-2 inline-block rounded-lg bg-[#2AABEE] px-4 py-2 text-sm font-bold text-white hover:opacity-90"
+>
+  Open Telegram Support
+</a>
 
-                      <input
-                        value={name}
-                        onChange={(e) => setName(e.target.value)}
-                        placeholder="Your name"
-                        className="mt-4 w-full rounded-xl border px-4 py-3"
-                      />
+<p className="mt-4 text-base leading-relaxed text-[#6b4428]">
+  WhatsApp support will be available soon.
+</p>
 
-                      <select
-                        value={ageGroup}
-                        onChange={(e) => setAgeGroup(e.target.value)}
-                        className="mt-4 w-full rounded-xl border px-4 py-3"
-                      >
-                        <option>Under 18</option>
-                        <option>18–30</option>
-                        <option>31–45</option>
-                        <option>46+</option>
-                      </select>
+<button
+  type="button"
+  disabled
+  className="mt-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-bold text-white opacity-60"
+>
+  WhatsApp Coming Soon
+</button>
+      </div>
 
-                      <select
-                        value={contactMethod}
-                        onChange={(e) => setContactMethod(e.target.value)}
-                        className="mt-4 w-full rounded-xl border px-4 py-3"
-                      >
-                        <option>Telegram</option>
-                        <option>WhatsApp</option>
-                      </select>
+      {/* RIGHT SIDE */}
 
-                      <input
-                        value={contactValue}
-                        onChange={(e) => setContactValue(e.target.value)}
-                        placeholder="Telegram username, example: @username"
-                        className="mt-4 w-full rounded-xl border px-4 py-3"
-                      />
+      {/* RIGHT SIDE */}
+      <div className="flex h-full flex-col gap-3 overflow-hidden">
+        <div className="rounded-2xl bg-white/95 p-4 shadow">
+          <h2 className="text-2xl font-bold text-[#7a3b1d]">
+            Tell me about you
+          </h2>
 
-                      <button
-                        onClick={createUser}
-                        className="mt-5 rounded-xl bg-[#7a3b1d] px-6 py-3 font-bold text-white"
-                      >
-                        Generate Code
-                      </button>
-                    </div>
-                  </>
-                )}
+          <p className="mt-1 text-sm">
+            Add simple details so Happy Office can prepare your access code.
+          </p>
 
-                <div className="mt-8 rounded-2xl bg-[#f7efe6] p-6 shadow">
-                  <h2 className="text-2xl font-bold text-[#7a3b1d]">
-                    Enter Your Full Access Code
-                  </h2>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="What should we call you?"
+            className="mt-3 w-full rounded-xl border border-[#7a3b1d] px-4 py-2"
+          />
 
-                  <p className="mt-2 text-lg">
-                    Use the code and access number sent to you.
-                  </p>
+          <select
+            value={ageGroup}
+            onChange={(e) => setAgeGroup(e.target.value)}
+            className="mt-2 w-full rounded-xl border border-[#7a3b1d] px-4 py-2"
+          >
+            <option>Under 18</option>
+            <option>18–30</option>
+            <option>31–45</option>
+            <option>46+</option>
+          </select>
 
-                  <input
-                    value={activeCode}
-                    onChange={(e) => setActiveCode(e.target.value)}
-                    placeholder="Example: ELVY-7K2P9-4821"
-                    className="mt-4 w-full rounded-xl border px-4 py-3"
-                  />
+          <select
+            value={contactMethod}
+            onChange={(e) => setContactMethod(e.target.value)}
+            className="mt-2 w-full rounded-xl border border-[#7a3b1d] px-4 py-2"
+          >
+            <option>Telegram</option>
+            <option>WhatsApp</option>
+          </select>
 
-                  <button
-                    onClick={openPrivateChat}
-                    className="mt-4 rounded-xl bg-black px-6 py-3 font-bold text-white"
-                  >
-                    Open Private Chat
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        </section>
-      )}
+          <input
+            value={contactValue}
+            onChange={(e) => setContactValue(e.target.value)}
+            placeholder="Telegram username, example: @username"
+            className="mt-2 w-full rounded-xl border border-[#7a3b1d] px-4 py-2"
+          />
 
+          <button
+            onClick={createUser}
+            className="mt-3 w-full rounded-xl bg-[#7a3b1d] px-6 py-3 font-bold text-white"
+          >
+            Generate My Access Code
+          </button>
+        </div>
+
+        <div className="rounded-2xl bg-[#f7efe6] p-4 shadow">
+          <h2 className="text-xl font-bold text-[#7a3b1d]">
+            To contact Happy Office team, please enter your access code.
+          </h2>
+
+          <p className="mt-1 text-sm">
+            If you already have your access code and number, enter them here.
+            If not, generate your access code first. Happy Office team will then send your access number.
+          </p>
+
+          <input
+            value={activeCode}
+            onChange={(e) => setActiveCode(e.target.value)}
+            placeholder="Example: ELVY-7K2P9-4821"
+            className="mt-3 w-full rounded-xl border border-[#7a3b1d] px-4 py-2"
+          />
+
+          <button
+            onClick={openPrivateChat}
+            className="mt-3 w-full rounded-xl bg-black px-6 py-3 font-bold text-white"
+          >
+            Continue
+          </button>
+
+          <p className="mt-2 text-sm">
+            Your code is personal. Please do not share it with others.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+)}
       {openedUser && !dashboardOpen && (
         <div className="fixed right-6 top-[18%] z-50 h-[70%] w-[360px] rounded-2xl bg-white p-5 shadow-2xl">
           <h2 className="text-xl font-bold text-[#7a3b1d]">
@@ -964,7 +943,7 @@ const interval = window.setInterval(async () => {
           </p>
 
           {openedUser.status === "Active" && (
-            <p className="text-xs font-semibold text-green-700">
+            <p className="text-sm font-semibold text-green-700">
               Elvy memory is active: {getMemorySummary(openedUser.memory)}
             </p>
           )}

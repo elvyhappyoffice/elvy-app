@@ -75,66 +75,6 @@ function readFounderSettings() {
     return { automaticPaymentOpen: false };
   }
 }
-
-function readPaymentSettings() {
-  try {
-    const file = path.join(process.cwd(), "data", "paymentSettings.json");
-
-    const fallback = {
-      paypalActive: false,
-      paypalLink: "",
-      skrillActive: false,
-      skrillLink: "",
-    };
-
-    if (!fs.existsSync(file)) {
-      return fallback;
-    }
-
-    return {
-      ...fallback,
-      ...JSON.parse(fs.readFileSync(file, "utf8")),
-    };
-  } catch {
-    return {
-      paypalActive: false,
-      paypalLink: "",
-      skrillActive: false,
-      skrillLink: "",
-    };
-  }
-}
-
-function withUserCode(link: string, user: SupportUser) {
-  const cleanLink = String(link || "").trim();
-  if (!cleanLink) return "";
-
-  try {
-    const url = new URL(cleanLink);
-    if (!url.searchParams.has("code")) {
-      url.searchParams.set("code", user.code);
-    }
-    return url.toString();
-  } catch {
-    const separator = cleanLink.includes("?") ? "&" : "?";
-    return `${cleanLink}${separator}code=${encodeURIComponent(user.code)}`;
-  }
-}
-
-function buildPaymentLinksText(user: SupportUser) {
-  const settings = readPaymentSettings();
-  const lines: string[] = [];
-
-  if (settings.paypalActive && settings.paypalLink) {
-    lines.push(`PayPal: ${withUserCode(settings.paypalLink, user)}`);
-  }
-
-  if (settings.skrillActive && settings.skrillLink) {
-    lines.push(`Skrill: ${withUserCode(settings.skrillLink, user)}`);
-  }
-
-  return lines.join("\n");
-}
 async function sendTelegramMessage(chatId: string, text: string) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) throw new Error("Missing TELEGRAM_BOT_TOKEN");
@@ -374,42 +314,6 @@ The reply must be short, natural, relevant, and must not invent unknown Happy Of
 `;
 }
 
-
-function founderElvyRules(user: SupportUser) {
-  return `
-You are Elvy inside Happy Office.
-
-The person talking to you is the founder of Happy Office.
-
-Founder: ${user.name}
-
-Core Founder Mode:
-- Respond as a calm system assistant for the founder.
-- You may discuss testing, system flow, Telegram behavior, tickets, credits, activation, admin dashboard, prompts, and user experience.
-- Help the founder diagnose, improve, and verify the system.
-- Be practical, direct, and technical when needed.
-- Do not answer like a normal customer user.
-- Do not hide system explanations from the founder.
-- Keep replies clear, practical, and short.
-
-Founder testing behavior:
-- If the founder reports a problem, identify the most likely cause and the next check.
-- If the founder asks about credits, tickets, activation, Telegram, webhook, or dashboard, explain the system behavior clearly.
-- If the founder asks for a user-facing message, write it in Elvy's calm user style.
-
-Safety:
-- Do not provide dangerous, illegal, medical, legal, or financial instructions.
-- If unsafe, redirect calmly.
-
-Final check:
-The reply must help the founder test or improve Happy Office without sounding like normal visitor support.
-`;
-}
-
-function getSystemRules(user: SupportUser, isFounder: boolean) {
-  return isFounder ? founderElvyRules(user) : baseElvyRules(user);
-}
-
 function buildPrompt(user: SupportUser, userMessage: string) {
   const memory = buildMemorySummary(user);
 
@@ -424,11 +328,7 @@ Write Elvy's reply now.
 `;
 }
 
-async function getElvyAIReply(
-  user: SupportUser,
-  userMessage: string,
-  isFounder: boolean
-) {
+async function getElvyAIReply(user: SupportUser, userMessage: string) {
   const apiKey = process.env.OPENAI_API_KEY;
   const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 
@@ -447,7 +347,7 @@ async function getElvyAIReply(
       input: [
         {
           role: "system",
-          content: getSystemRules(user, isFounder),
+          content: baseElvyRules(user),
         },
         ...buildRecentConversationMessages(user, 6),
         {
@@ -476,8 +376,7 @@ async function getElvyAIReply(
 async function getCorrectedElvyReply(
   user: SupportUser,
   userMessage: string,
-  badReply: string,
-  isFounder: boolean
+  badReply: string
 ) {
   const apiKey = process.env.OPENAI_API_KEY;
   const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
@@ -495,7 +394,7 @@ async function getCorrectedElvyReply(
       input: [
         {
           role: "system",
-          content: getSystemRules(user, isFounder),
+          content: baseElvyRules(user),
         },
         ...buildRecentConversationMessages(user, 6),
         {
@@ -547,7 +446,6 @@ export async function POST(req: NextRequest) {
     }
 
     const chatId = String(message.chat.id);
-    const isFounder = chatId === process.env.FOUNDER_TELEGRAM_ID;
     const text = String(message.text).trim();
 
     const username = message.from?.username
@@ -591,33 +489,20 @@ export async function POST(req: NextRequest) {
 
       const visitor: SupportUser = {
         code: `VISITOR-${Date.now()}`,
-        name: firstName || `Visitor ${visitorNumber}`,
+        name: `Visitor ${visitorNumber}`,
         contactMethod: "Telegram",
         contactValue: username || `chat:${chatId}`,
-        status: "Active",
-        repliesLimit: 3,
+        status: "Visitor",
+        repliesLimit: 0,
         repliesUsed: 0,
-        adminMessages: [
-          `Welcome to Happy Office for communication and learning.
-
-Elvy will be with you shortly.`,
-          `Hello again.
-
-I’m Elvy, a calm communication companion from Happy Office.
-
-You can send a short message whenever you feel ready.`,
-        ],
-        userMessages: [],
+        adminMessages: [],
+        userMessages: [text],
         telegramChatId: chatId,
         memory: {
           telegramFirstName: firstName,
           telegramUsername: username,
           firstContactAt: new Date().toISOString(),
-          freeTrial: true,
         },
-        paymentNoticeSent: false,
-        paid: false,
-        paymentStatus: "Unpaid",
       };
 
       users.push(visitor);
@@ -625,46 +510,32 @@ You can send a short message whenever you feel ready.`,
 
       await sendTelegramMessage(
         chatId,
-        `Welcome to Happy Office for communication and learning.
+        `Welcome to Happy Office.
 
-Elvy will be with you shortly.`
-      );
+I’m glad you are here.
 
-      await sendTelegramMessage(
-        chatId,
-        `Hello again.
+To begin, please visit the link below and generate your personal access code.
 
-I’m Elvy, a calm communication companion from Happy Office.
+After activation, you can start your conversation with Elvy.
 
-You can send a short message whenever you feel ready.`
+🔒 Please do not share your code. It is your personal access to contact the Happy Office team directly.
+
+${HAPPY_OFFICE_LINK}`
       );
 
       return NextResponse.json({ ok: true });
     }
 
     if (user.status === "Visitor") {
-      user.status = "Active";
-      user.repliesLimit = 3;
-      user.repliesUsed = user.repliesUsed || 0;
-      user.paymentNoticeSent = false;
-      user.paymentStatus = user.paymentStatus || "Unpaid";
-
-      saveUsers(users);
-
       await sendTelegramMessage(
         chatId,
-        `Welcome to Happy Office for communication and learning.
+        `Welcome again to Happy Office.
 
-Elvy will be with you shortly.`
-      );
+Please visit Happy Office and generate your personal access code.
 
-      await sendTelegramMessage(
-        chatId,
-        `Hello again.
+🔒 Keep your code private. It is used to contact the Happy Office team directly.
 
-I’m Elvy, a calm communication companion from Happy Office.
-
-You can send a short message whenever you feel ready.`
+${HAPPY_OFFICE_LINK}`
       );
 
       return NextResponse.json({ ok: true });
@@ -679,34 +550,36 @@ You can send a short message whenever you feel ready.`
     }
 
 if (user.repliesUsed >= user.repliesLimit) {
-      if (user.paymentNoticeSent) {
-        return NextResponse.json({ ok: true });
-      }
+  if (user.paymentNoticeSent) {
+    return NextResponse.json({ ok: true });
+  }
 
-      const founderSettings = readFounderSettings();
+  const settings = readFounderSettings();
 
-      if (founderSettings.automaticPaymentOpen) {
-        const paymentLinksText = buildPaymentLinksText(user);
+  if (settings.automaticPaymentOpen) {
+    await sendTelegramMessage(
+      chatId,
+      `As Elvy, I am so sorry that this conversation has come to an end.
 
-        if (paymentLinksText) {
-          await sendTelegramMessage(
-            chatId,
-            `To continue your conversation with Elvy, please get a Happy Office ticket using one of the links below.
+I’m truly sorry that I cannot reply to your last message right now.
 
-${paymentLinksText}`
-          );
-        } else {
-          await sendTelegramMessage(
-            chatId,
-            `To continue your conversation with Elvy, please get a Happy Office ticket.
+I sincerely hope that your time with Elvy has helped you reflect, understand yourself better, and move forward with more clarity and confidence.
 
-Payment links will be available soon.`
-          );
-        }
-      } else {
-        await sendTelegramMessage(
-          chatId,
-          `As Elvy, I am so sorry that this conversation has come to an end.
+Sometimes, even a few calm conversations can leave meaningful lessons that stay with us for a very long time.
+
+To continue your journey with Elvy, you are warmly invited to activate a new ticket.
+
+PayPal: ${HAPPY_OFFICE_LINK}/api/payment/start?code=${encodeURIComponent(user.code)}&method=PayPal
+Skrill: ${HAPPY_OFFICE_LINK}/api/payment/start?code=${encodeURIComponent(user.code)}&method=Skrill
+
+With a new ticket, we will continue our conversation from where we stopped.
+
+Thank you for being part of Happy Office.`
+    );
+  } else {
+    await sendTelegramMessage(
+      chatId,
+      `As Elvy, I am so sorry that this conversation has come to an end.
 
 I’m truly sorry that I cannot reply to your last message right now.
 
@@ -715,21 +588,21 @@ Ticket activation is not available at the moment.
 If you need help, you can contact Happy Office using your personal code.
 
 Thank you for being part of Happy Office.`
-        );
-      }
+    );
+  }
 
-      user.paymentNoticeSent = true;
-      saveUsers(users);
+  user.paymentNoticeSent = true;
+  saveUsers(users);
 
-      return NextResponse.json({ ok: true });
-    }
+  return NextResponse.json({ ok: true });
+}
 
-    let reply = await getElvyAIReply(user, text, isFounder);
+    let reply = await getElvyAIReply(user, text);
     let replyScore = scoreElvyReply(text, reply);
     let wasAutoCorrected = false;
 
     if (replyScore < 70) {
-      const correctedReply = await getCorrectedElvyReply(user, text, reply, isFounder);
+      const correctedReply = await getCorrectedElvyReply(user, text, reply);
       const correctedScore = scoreElvyReply(text, correctedReply);
 
       if (correctedScore >= replyScore) {

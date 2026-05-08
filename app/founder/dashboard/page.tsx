@@ -21,6 +21,14 @@ type DailySupportUser = {
   helpType?: string;
   contactMethod?: string;
   contactValue?: string;
+  paymentStatus?: "Unpaid" | "Pending" | "Paid" | "Failed";
+  paymentMethod?: "PayPal" | "Skrill";
+  paymentReference?: string;
+  paidAt?: string;
+  paid?: boolean;
+  adminMessages?: string[];
+  userMessages?: string[];
+  telegramChatId?: string;
 };
 
 type TalkSettings = {
@@ -74,11 +82,11 @@ export default function FounderDashboardPage() {
 
   const [aiActive, setAiActive] = useState(false);
   const [confirmAI, setConfirmAI] = useState(false);
-  const [aiBudget, setAiBudget] = useState(50);
-  const [inputTokens, setInputTokens] = useState(300);
-  const [outputTokens, setOutputTokens] = useState(250);
-  const [inputTokenPrice, setInputTokenPrice] = useState(0.000001);
-  const [outputTokenPrice, setOutputTokenPrice] = useState(0.000004);
+  const [aiBudget, setAiBudget] = useState(5);
+  const [inputTokens, setInputTokens] = useState(2050);
+  const [outputTokens, setOutputTokens] = useState(90);
+  const [inputTokenPrice, setInputTokenPrice] = useState(0.0000004);
+  const [outputTokenPrice, setOutputTokenPrice] = useState(0.0000016);
   const [freeTalkReplies, setFreeTalkReplies] = useState(100);
 
   const [ticketPrice, setTicketPrice] = useState(4);
@@ -88,16 +96,40 @@ export default function FounderDashboardPage() {
   const [dailyUsers, setDailyUsers] = useState<DailySupportUser[]>([]);
   const [showUsers, setShowUsers] = useState(false);
   const [directorMessage, setDirectorMessage] = useState("");
-  const [selectedUserCode, setSelectedUserCode] = useState("");
+  const [selectedUserCode, setSelectedUserCode] = useState(""); 
+  // === Payment Control (NEW) ===
+ const [paymentOpen, setPaymentOpen] = useState(false);
+
+  // === Payment Settings (NEW) ===
+  const [paypalActive, setPaypalActive] = useState(false);
+  const [paypalLink, setPaypalLink] = useState("");
+  const [skrillActive, setSkrillActive] = useState(false);
+  const [skrillLink, setSkrillLink] = useState("");
 
   const [talkFreeUsed, setTalkFreeUsed] = useState(0);
   const [talkTotalFreeLimit, setTalkTotalFreeLimit] = useState(100);
 
-  function loadRealData() {
-    const realDailyUsers = safeParse<DailySupportUser[]>(
-      localStorage.getItem(DAILY_USERS_KEY),
-      []
-    );
+  async function loadRealData() {
+    try {
+      const res = await fetch("/api/daily-support-users", {
+        cache: "no-store",
+      });
+
+      const data = await res.json();
+
+      if (Array.isArray(data?.users)) {
+        setDailyUsers(data.users);
+      }
+    } catch (error) {
+      console.error("Could not load Daily Support users from server:", error);
+
+      const fallbackUsers = safeParse<DailySupportUser[]>(
+        localStorage.getItem(DAILY_USERS_KEY),
+        []
+      );
+
+      setDailyUsers(fallbackUsers);
+    }
 
     const talkSettings = safeParse<TalkSettings>(
       localStorage.getItem(TALK_SETTINGS_KEY),
@@ -106,7 +138,6 @@ export default function FounderDashboardPage() {
 
     const talkUsed = Number(localStorage.getItem(TALK_TOTAL_FREE_USED_KEY) || "0");
 
-    setDailyUsers(realDailyUsers);
     setTalkFreeUsed(talkUsed);
     setTalkTotalFreeLimit(talkSettings.totalFreeRepliesRoom || freeTalkReplies || 100);
   }
@@ -117,16 +148,38 @@ export default function FounderDashboardPage() {
       localStorage.getItem(ADMIN_CONTROLS_KEY),
       DEFAULT_ADMINS
     );
+// === Load Payment Setting (NEW) ===
+fetch("/api/founder-settings")
+  .then((res) => res.json())
+  .then((data) => {
+    if (data?.settings) {
+      setPaymentOpen(data.settings.automaticPaymentOpen);
+    }
+  })
+  .catch(() => {});
+
+// === Load Payment Links Settings (NEW) ===
+fetch("/api/payment-settings")
+  .then((res) => res.json())
+  .then((data) => {
+    if (data?.settings) {
+      setPaypalActive(Boolean(data.settings.paypalActive));
+      setPaypalLink(data.settings.paypalLink || "");
+      setSkrillActive(Boolean(data.settings.skrillActive));
+      setSkrillLink(data.settings.skrillLink || "");
+    }
+  })
+  .catch(() => {});
 
     const officeOpen = localStorage.getItem(HAPPY_OFFICE_KEY);
 
     if (savedAI) {
       setAiActive(savedAI.aiActive ?? false);
-      setAiBudget(savedAI.aiBudget ?? 50);
-      setInputTokens(savedAI.inputTokens ?? 300);
-      setOutputTokens(savedAI.outputTokens ?? 250);
-      setInputTokenPrice(savedAI.inputTokenPrice ?? 0.000001);
-      setOutputTokenPrice(savedAI.outputTokenPrice ?? 0.000004);
+      setAiBudget(savedAI.aiBudget ?? 5);
+      setInputTokens(savedAI.inputTokens ?? 2050);
+      setOutputTokens(savedAI.outputTokens ?? 90);
+      setInputTokenPrice(savedAI.inputTokenPrice ?? 0.0000004);
+      setOutputTokenPrice(savedAI.outputTokenPrice ?? 0.0000016);
       setFreeTalkReplies(savedAI.freeTalkReplies ?? 100);
       setTicketPrice(savedAI.ticketPrice ?? 4);
       setRepliesPerTicket(savedAI.repliesPerTicket ?? 500);
@@ -141,7 +194,7 @@ export default function FounderDashboardPage() {
     loadRealData();
 
     const interval = window.setInterval(() => {
-      loadRealData();
+      void loadRealData();
     }, 1500);
 
     return () => window.clearInterval(interval);
@@ -174,6 +227,57 @@ export default function FounderDashboardPage() {
     localStorage.setItem("adminRoom", room);
     window.location.href = `/sections/${room}`;
   }
+// === Toggle Payment (NEW) ===
+async function toggleAutomaticPayment() {
+  try {
+    const res = await fetch("/api/founder-settings", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        automaticPaymentOpen: !paymentOpen,
+      }),
+    });
+
+    const data = await res.json();
+
+    if (data?.settings) {
+      setPaymentOpen(data.settings.automaticPaymentOpen);
+    }
+  } catch (err) {
+    console.error("Payment toggle failed", err);
+  }
+}
+
+// === Save Payment Links Settings (NEW) ===
+async function savePaymentSettings() {
+  try {
+    const res = await fetch("/api/payment-settings", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        paypalActive,
+        paypalLink,
+        skrillActive,
+        skrillLink,
+      }),
+    });
+
+    const data = await res.json();
+
+    if (data?.ok) {
+      alert("Payment settings saved.");
+    } else {
+      alert("Could not save payment settings.");
+    }
+  } catch (err) {
+    console.error("Payment settings save failed", err);
+    alert("Could not save payment settings.");
+  }
+}
 
   function toggleAI() {
     if (!confirmAI) {
@@ -206,27 +310,77 @@ export default function FounderDashboardPage() {
     );
   }
 
-  function sendDirectorMessage() {
-    if (!selectedUserCode || !directorMessage.trim()) {
+  async function sendDirectorMessage() {
+    const cleanMessage = directorMessage.trim();
+
+    if (!selectedUserCode || !cleanMessage) {
       alert("Select a user and write a message first.");
       return;
     }
 
+    const selectedUser = dailyUsers.find((user) => user.code === selectedUserCode);
+
+    if (!selectedUser) {
+      alert("Selected user was not found. Please refresh real data and try again.");
+      return;
+    }
+
+    const finalMessage = `Director of Happy Office: ${cleanMessage}`;
+
     const updatedUsers = dailyUsers.map((user) => {
       if (user.code !== selectedUserCode) return user;
+
       return {
         ...user,
-        adminMessages: [
-          ...((user as any).adminMessages || []),
-          `Director of Happy Office: ${directorMessage}`,
-        ],
-      } as any;
+        adminMessages: [...(user.adminMessages || []), finalMessage],
+      };
     });
 
-    localStorage.setItem(DAILY_USERS_KEY, JSON.stringify(updatedUsers));
-    setDailyUsers(updatedUsers);
-    setDirectorMessage("");
-    alert("Message saved for the selected user.");
+    try {
+      const saveRes = await fetch("/api/daily-support-users", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ users: updatedUsers }),
+      });
+
+      if (!saveRes.ok) {
+        alert("Message was not saved. Please check /api/daily-support-users.");
+        return;
+      }
+
+      setDailyUsers(updatedUsers);
+      setDirectorMessage("");
+
+      if (selectedUser.telegramChatId) {
+        const telegramRes = await fetch("/api/telegram/send", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            chatId: selectedUser.telegramChatId,
+            message: finalMessage,
+          }),
+        });
+
+        const telegramData = await telegramRes.json();
+
+        if (!telegramData?.success) {
+          alert("Message saved, but Telegram sending failed. Check the Telegram route or chat ID.");
+          return;
+        }
+
+        alert("Director message saved and sent to Telegram.");
+        return;
+      }
+
+      alert("Message saved. This user has no Telegram chat ID yet, so it was not sent to Telegram.");
+    } catch (error) {
+      console.error("Director message failed:", error);
+      alert("Message failed. Check the console or server logs.");
+    }
   }
 
   function logout() {
@@ -236,11 +390,17 @@ export default function FounderDashboardPage() {
     window.location.href = "/admin";
   }
 
-  const pricePerReply =
-    inputTokens * inputTokenPrice + outputTokens * outputTokenPrice;
+  const inputCostPerReply = inputTokens * inputTokenPrice;
+  const outputCostPerReply = outputTokens * outputTokenPrice;
+  const pricePerReply = inputCostPerReply + outputCostPerReply;
 
   const totalPossibleAIReplies =
     pricePerReply > 0 ? Math.floor(aiBudget / pricePerReply) : 0;
+
+  const costPerTicket = pricePerReply * repliesPerTicket;
+
+  const totalTicketsAvailable =
+    costPerTicket > 0 ? Math.floor(aiBudget / costPerTicket) : 0;
 
   const totalDailyUsers = dailyUsers.length;
   const activeDailyUsers = dailyUsers.filter((u) => u.status === "Active");
@@ -249,22 +409,42 @@ export default function FounderDashboardPage() {
   );
   const blockedDailyUsers = dailyUsers.filter((u) => u.status === "Blocked");
 
-  const dailyRepliesSold = dailyUsers.reduce(
-    (sum, user) => sum + Number(user.repliesLimit || 0),
-    0
-  );
+  const dailyRepliesSold = dailyUsers.filter(
+    (user) =>
+      user.status === "Active" ||
+      user.paymentStatus === "Paid" ||
+      Boolean(user.paidAt)
+  ).length;
 
   const dailyRepliesUsed = dailyUsers.reduce(
     (sum, user) => sum + Number(user.repliesUsed || 0),
     0
   );
 
-  const dailyRepliesLeft = Math.max(dailyRepliesSold - dailyRepliesUsed, 0);
+  const dailyRepliesLeft = dailyUsers.reduce(
+    (sum, user) =>
+      sum +
+      Math.max(
+        Number(user.repliesLimit || 0) - Number(user.repliesUsed || 0),
+        0
+      ),
+    0
+  );
 
-  const ticketsSold = dailyUsers.filter((u) => Number(u.repliesLimit || 0) > 0).length;
+  const ticketsSold = dailyUsers.filter(
+    (user) =>
+      user.status === "Active" ||
+      user.paymentStatus === "Paid" ||
+      Boolean(user.paidAt) ||
+      Boolean(user.paid)
+  ).length;
+
+  const ticketsRemaining = Math.max(totalTicketsAvailable - ticketsSold, 0);
+  const ticketGenerationOpen = aiActive && ticketsRemaining > 0;
   const grossIncome = ticketsSold * ticketPrice;
   const estimatedAICost = (dailyRepliesUsed + talkFreeUsed) * pricePerReply;
-  const netProfit = grossIncome - estimatedAICost;
+  const reservedTicketAICost = ticketsSold * costPerTicket;
+  const netProfit = grossIncome - reservedTicketAICost;
   const talkFreeLeft = Math.max(talkTotalFreeLimit - talkFreeUsed, 0);
 
   return (
@@ -318,7 +498,7 @@ export default function FounderDashboardPage() {
 
           <div className="grid gap-4 md:grid-cols-4">
             <div className="rounded-xl bg-[#f5e6d3] p-4">
-              <p>Total Daily Support Users</p>
+              <p>Total Users</p>
               <p className="text-3xl font-bold">{totalDailyUsers}</p>
             </div>
 
@@ -327,35 +507,21 @@ export default function FounderDashboardPage() {
               <p className="text-3xl font-bold">{activeDailyUsers.length}</p>
             </div>
 
-            <div className="rounded-xl bg-yellow-50 p-4">
-              <p>Waiting Users</p>
-              <p className="text-3xl font-bold">{waitingDailyUsers.length}</p>
-            </div>
-
-            <div className="rounded-xl bg-red-50 p-4">
-              <p>Blocked Users</p>
-              <p className="text-3xl font-bold">{blockedDailyUsers.length}</p>
-            </div>
-
             <div className="rounded-xl bg-[#f5e6d3] p-4">
               <p>Daily Replies Sold</p>
               <p className="text-3xl font-bold">{dailyRepliesSold}</p>
-            </div>
-
-            <div className="rounded-xl bg-[#f5e6d3] p-4">
-              <p>Daily Replies Used</p>
-              <p className="text-3xl font-bold">{dailyRepliesUsed}</p>
-            </div>
-
-            <div className="rounded-xl bg-[#f5e6d3] p-4">
-              <p>Daily Replies Left</p>
-              <p className="text-3xl font-bold">{dailyRepliesLeft}</p>
+              <p className="mt-1 text-xs text-[#6b4428]">
+                Activated tickets
+              </p>
             </div>
 
             <div className="rounded-xl bg-[#f5e6d3] p-4">
               <p>Talk to Elvy Free Used</p>
               <p className="text-3xl font-bold">
                 {talkFreeUsed}/{talkTotalFreeLimit}
+              </p>
+              <p className="mt-1 text-xs text-[#6b4428]">
+                Free replies provided
               </p>
             </div>
           </div>
@@ -404,7 +570,7 @@ export default function FounderDashboardPage() {
           <div className="grid gap-4 md:grid-cols-3">
             <div>
               <label className="mb-1 block text-sm font-bold">
-                AI budget amount ($)
+                Available AI budget ($)
               </label>
               <input
                 type="number"
@@ -412,48 +578,71 @@ export default function FounderDashboardPage() {
                 onChange={(e) => setAiBudget(Number(e.target.value))}
                 className="w-full rounded border p-2"
               />
+              <p className="mt-1 text-xs text-gray-600">
+                Enter the real AI credit or budget available.
+              </p>
             </div>
 
             <div>
-              <label className="mb-1 block text-sm font-bold">Input tokens</label>
+              <label className="mb-1 block text-sm font-bold">
+                Total input tokens per reply
+              </label>
               <input
                 type="number"
                 value={inputTokens}
                 onChange={(e) => setInputTokens(Number(e.target.value))}
                 className="w-full rounded border p-2"
               />
+              <p className="mt-1 text-xs text-gray-600">
+                Includes Elvy prompt, memory, history, and user message.
+              </p>
             </div>
 
             <div>
-              <label className="mb-1 block text-sm font-bold">Output tokens</label>
+              <label className="mb-1 block text-sm font-bold">
+                Max output tokens per reply
+              </label>
               <input
                 type="number"
                 value={outputTokens}
                 onChange={(e) => setOutputTokens(Number(e.target.value))}
                 className="w-full rounded border p-2"
               />
+              <p className="mt-1 text-xs text-gray-600">
+                Maximum tokens allowed for Elvy reply.
+              </p>
             </div>
 
             <div>
-              <label className="mb-1 block text-sm font-bold">Input token price</label>
+              <label className="mb-1 block text-sm font-bold">
+                Input token price ($)
+              </label>
               <input
                 type="number"
-                step="0.000001"
+                step="0.0000001"
                 value={inputTokenPrice}
                 onChange={(e) => setInputTokenPrice(Number(e.target.value))}
                 className="w-full rounded border p-2"
               />
+              <p className="mt-1 text-xs text-gray-600">
+                Example GPT-4.1 mini: 0.0000004
+              </p>
             </div>
 
             <div>
-              <label className="mb-1 block text-sm font-bold">Output token price</label>
+              <label className="mb-1 block text-sm font-bold">
+                Output token price ($)
+              </label>
               <input
                 type="number"
-                step="0.000001"
+                step="0.0000001"
                 value={outputTokenPrice}
                 onChange={(e) => setOutputTokenPrice(Number(e.target.value))}
                 className="w-full rounded border p-2"
               />
+              <p className="mt-1 text-xs text-gray-600">
+                Example GPT-4.1 mini: 0.0000016
+              </p>
             </div>
 
             <div>
@@ -466,6 +655,33 @@ export default function FounderDashboardPage() {
                 onChange={(e) => setFreeTalkReplies(Number(e.target.value))}
                 className="w-full rounded border p-2"
               />
+              <p className="mt-1 text-xs text-gray-600">
+                Free replies reserved for Talk to Elvy room.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-4">
+            <div className="rounded-xl bg-[#f5e6d3] p-4">
+              <p className="text-sm">Input cost / reply</p>
+              <p className="text-xl font-bold">${inputCostPerReply.toFixed(6)}</p>
+            </div>
+
+            <div className="rounded-xl bg-[#f5e6d3] p-4">
+              <p className="text-sm">Output cost / reply</p>
+              <p className="text-xl font-bold">${outputCostPerReply.toFixed(6)}</p>
+            </div>
+
+            <div className="rounded-xl bg-[#f5e6d3] p-4">
+              <p className="text-sm">Max cost / reply</p>
+              <p className="text-xl font-bold">${pricePerReply.toFixed(6)}</p>
+            </div>
+
+            <div className="rounded-xl bg-[#f5e6d3] p-4">
+              <p className="text-sm">Replies from $1</p>
+              <p className="text-xl font-bold">
+                {pricePerReply > 0 ? Math.floor(1 / pricePerReply) : 0}
+              </p>
             </div>
           </div>
 
@@ -476,8 +692,23 @@ export default function FounderDashboardPage() {
                 {aiActive ? "Active" : "Inactive"}
               </span>
             </p>
-            <p>Estimated price per reply: ${pricePerReply.toFixed(6)}</p>
             <p>Total possible replies from budget: {totalPossibleAIReplies}</p>
+            <p>Replies per ticket: {repliesPerTicket}</p>
+            <p>Estimated AI cost per ticket: ${costPerTicket.toFixed(4)}</p>
+            <p>Total tickets available from AI budget: {totalTicketsAvailable}</p>
+            <p>Tickets sold: {ticketsSold}</p>
+            <p>
+              Tickets remaining:{" "}
+              <span className={ticketsRemaining > 0 ? "font-bold text-green-700" : "font-bold text-red-700"}>
+                {ticketsRemaining}
+              </span>
+            </p>
+            <p>
+              Ticket generation status:{" "}
+              <span className={ticketGenerationOpen ? "font-bold text-green-700" : "font-bold text-red-700"}>
+                {ticketGenerationOpen ? "Open" : "Closed"}
+              </span>
+            </p>
           </div>
 
           <label className="mt-4 flex items-center gap-2">
@@ -524,15 +755,220 @@ export default function FounderDashboardPage() {
                 className="w-full rounded border p-2"
               />
             </div>
+
+            <div className="rounded-xl bg-[#f5e6d3] p-3">
+              <p className="text-sm">AI cost per ticket</p>
+              <p className="text-xl font-bold">${costPerTicket.toFixed(4)}</p>
+            </div>
+
+            <div className="rounded-xl bg-[#f5e6d3] p-3">
+              <p className="text-sm">Profit per ticket</p>
+              <p className="text-xl font-bold">
+                ${(ticketPrice - costPerTicket).toFixed(2)}
+              </p>
+            </div>
           </div>
 
-          <div className="mt-4 grid gap-3 md:grid-cols-5">
-            <div className="rounded-xl bg-[#f5e6d3] p-3">Tickets sold: {ticketsSold}</div>
-            <div className="rounded-xl bg-[#f5e6d3] p-3">Replies sold: {dailyRepliesSold}</div>
-            <div className="rounded-xl bg-[#f5e6d3] p-3">Replies left: {dailyRepliesLeft}</div>
-            <div className="rounded-xl bg-[#f5e6d3] p-3">Gross: ${grossIncome.toFixed(2)}</div>
-            <div className="rounded-xl bg-[#f5e6d3] p-3">Net profit: ${netProfit.toFixed(2)}</div>
+          <div className="mt-4 grid gap-3 md:grid-cols-4">
+            <div className="rounded-xl bg-[#f5e6d3] p-3">
+              Tickets available: {totalTicketsAvailable}
+            </div>
+
+            <div className="rounded-xl bg-[#f5e6d3] p-3">
+              Tickets sold: {ticketsSold}
+            </div>
+
+            <div
+              className={`rounded-xl p-3 ${
+                ticketsRemaining > 0 ? "bg-green-50" : "bg-red-50"
+              }`}
+            >
+              Tickets remaining: {ticketsRemaining}
+            </div>
+
+            <div
+              className={`rounded-xl p-3 ${
+                ticketGenerationOpen ? "bg-green-50" : "bg-red-50"
+              }`}
+            >
+              Code generation: {ticketGenerationOpen ? "Open" : "Closed"}
+            </div>
+
+            <div className="rounded-xl bg-[#f5e6d3] p-3">
+              Total possible replies: {totalPossibleAIReplies}
+            </div>
+
+            <div className="rounded-xl bg-[#f5e6d3] p-3">
+              Replies reserved by sold tickets: {ticketsSold * repliesPerTicket}
+            </div>
+
+            <div className="rounded-xl bg-[#f5e6d3] p-3">
+              Gross: ${grossIncome.toFixed(2)}
+            </div>
+
+            <div className="rounded-xl bg-[#f5e6d3] p-3">
+              Net profit: ${netProfit.toFixed(2)}
+            </div>
           </div>
+
+          {ticketsRemaining <= 0 && (
+            <div className="mt-4 rounded-xl bg-red-50 p-4 font-semibold text-red-800">
+              No AI tickets are currently available. Add more AI budget to continue generating new codes or tickets.
+            </div>
+          )}
+        </section>
+
+        <section className="rounded-2xl bg-white p-5 shadow">
+          <h2 className="mb-4 text-2xl font-bold text-[#7a3b1d]">
+            Payment Activity
+          </h2>
+
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[900px] border-collapse text-left text-sm">
+              <thead>
+                <tr className="bg-[#f5e6d3] text-[#3b2114]">
+                  <th className="border p-3">User Code</th>
+                  <th className="border p-3">Name</th>
+                  <th className="border p-3">Payment Status</th>
+                  <th className="border p-3">Method</th>
+                  <th className="border p-3">Paid At</th>
+                  <th className="border p-3">Replies Left</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dailyUsers.length === 0 && (
+                  <tr>
+                    <td className="border p-3" colSpan={6}>
+                      No payment activity yet.
+                    </td>
+                  </tr>
+                )}
+
+                {dailyUsers.map((user) => {
+                  const left = Math.max(
+                    Number(user.repliesLimit || 0) - Number(user.repliesUsed || 0),
+                    0
+                  );
+
+                  return (
+                    <tr key={`payment-${user.code}`}>
+                      <td className="border p-3 font-bold text-[#7a3b1d]">
+                        {user.code}
+                      </td>
+                      <td className="border p-3">{user.name}</td>
+                      <td className="border p-3">
+                        <span
+                          className={
+                            user.paymentStatus === "Paid"
+                              ? "font-bold text-green-700"
+                              : user.paymentStatus === "Pending"
+                                ? "font-bold text-yellow-700"
+                                : user.paymentStatus === "Failed"
+                                  ? "font-bold text-red-700"
+                                  : "font-bold text-gray-700"
+                          }
+                        >
+                          {user.paymentStatus || "Unpaid"}
+                        </span>
+                      </td>
+                      <td className="border p-3">{user.paymentMethod || "—"}</td>
+                      <td className="border p-3">
+                        {user.paidAt
+                          ? new Date(user.paidAt).toLocaleString()
+                          : "—"}
+                      </td>
+                      <td className="border p-3">{left}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="rounded-2xl bg-white p-5 shadow">
+          <h2 className="mb-4 text-2xl font-bold text-[#7a3b1d]">
+            Payment Control
+          </h2>
+
+          <p className="mb-3">
+            Automatic Payment:{" "}
+            <span
+              className={
+                paymentOpen
+                  ? "font-bold text-green-700"
+                  : "font-bold text-red-700"
+              }
+            >
+              {paymentOpen ? "Open" : "Closed"}
+            </span>
+          </p>
+
+          <button
+            onClick={toggleAutomaticPayment}
+            className={`mb-6 rounded-xl px-5 py-2 font-bold text-white ${
+              paymentOpen ? "bg-red-700" : "bg-green-700"
+            }`}
+          >
+            {paymentOpen ? "Close Automatic Payment" : "Open Automatic Payment"}
+          </button>
+
+          <h3 className="mb-3 text-xl font-bold text-[#7a3b1d]">
+            Payment Settings
+          </h3>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="rounded-xl border p-4">
+              <label className="mb-3 flex items-center gap-2 font-bold">
+                <input
+                  type="checkbox"
+                  checked={paypalActive}
+                  onChange={(e) => setPaypalActive(e.target.checked)}
+                />
+                Activate PayPal
+              </label>
+
+              <label className="mb-1 block text-sm font-bold">
+                PayPal payment link
+              </label>
+              <input
+                type="text"
+                value={paypalLink}
+                onChange={(e) => setPaypalLink(e.target.value)}
+                placeholder="Enter PayPal payment link"
+                className="w-full rounded border p-2"
+              />
+            </div>
+
+            <div className="rounded-xl border p-4">
+              <label className="mb-3 flex items-center gap-2 font-bold">
+                <input
+                  type="checkbox"
+                  checked={skrillActive}
+                  onChange={(e) => setSkrillActive(e.target.checked)}
+                />
+                Activate Skrill
+              </label>
+
+              <label className="mb-1 block text-sm font-bold">
+                Skrill payment link
+              </label>
+              <input
+                type="text"
+                value={skrillLink}
+                onChange={(e) => setSkrillLink(e.target.value)}
+                placeholder="Enter Skrill payment link"
+                className="w-full rounded border p-2"
+              />
+            </div>
+          </div>
+
+          <button
+            onClick={savePaymentSettings}
+            className="mt-4 rounded-xl bg-[#7a3b1d] px-5 py-2 font-bold text-white"
+          >
+            Save Payment Settings
+          </button>
         </section>
 
         <section className="rounded-2xl bg-white p-5 shadow">
@@ -625,7 +1061,10 @@ export default function FounderDashboardPage() {
                 </p>
 
                 <p className="mb-2 text-sm">
-                  Selected user: {selectedUserCode || "None"}
+                  Selected user:{" "}
+                  {selectedUserCode
+                    ? `${dailyUsers.find((user) => user.code === selectedUserCode)?.name || "User"} (${selectedUserCode})`
+                    : "None"}
                 </p>
 
                 <textarea
