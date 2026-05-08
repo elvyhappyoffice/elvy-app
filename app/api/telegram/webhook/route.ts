@@ -161,7 +161,7 @@ function mapSupabaseRowToUser(
 
 async function readUsersFromSupabase(): Promise<SupportUser[]> {
   const usersRes = await supabaseFetch(
-    "daily_support_users?select=*&order=created_at.desc&limit=500"
+    "daily_support_users?select=*"
   );
 
   if (!usersRes.ok) {
@@ -173,7 +173,7 @@ async function readUsersFromSupabase(): Promise<SupportUser[]> {
   const rows = (await usersRes.json()) as SupabaseUserRow[];
 
   const messagesRes = await supabaseFetch(
-    "elvy_messages?select=*&order=created_at.asc&limit=2000"
+    "elvy_messages?select=*"
   );
 
   const allMessages = messagesRes.ok
