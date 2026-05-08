@@ -67,7 +67,10 @@ const REPLIES_PER_CREDIT = 1;
 const CREDIT_NOTICE_INTERVAL_REPLIES = 100;
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
-const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+const SUPABASE_KEY =
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+  "";
 
 function isSupabaseEnabled() {
   return Boolean(SUPABASE_URL && SUPABASE_KEY);
@@ -163,8 +166,9 @@ async function readUsersFromSupabase(): Promise<SupportUser[]> {
   );
 
   if (!usersRes.ok) {
-    console.error("Supabase read users error", await usersRes.text());
-    return [];
+    const details = await usersRes.text();
+    console.error("Supabase read users error", details);
+    throw new Error(`Supabase read users error: ${details}`);
   }
 
   const rows = (await usersRes.json()) as SupabaseUserRow[];
@@ -228,7 +232,9 @@ async function saveUserToSupabase(user: SupportUser) {
     );
 
     if (!patchRes.ok) {
-      console.error("Supabase update user error", await patchRes.text());
+      const details = await patchRes.text();
+      console.error("Supabase update user error", details);
+      throw new Error(`Supabase update user error: ${details}`);
     }
 
     return;
@@ -241,7 +247,9 @@ async function saveUserToSupabase(user: SupportUser) {
   });
 
   if (!postRes.ok) {
-    console.error("Supabase create user error", await postRes.text());
+    const details = await postRes.text();
+    console.error("Supabase create user error", details);
+    throw new Error(`Supabase create user error: ${details}`);
   }
 }
 
