@@ -1,1 +1,36 @@
-[]
+[
+  {
+    "code": "VISITOR-1778248656742",
+    "name": "Said",
+    "contactMethod": "Telegram",
+    "contactValue": "@saidrighton",
+    "status": "Active",
+    "repliesLimit": 3,
+    "repliesUsed": 1,
+    "adminMessages": [
+      "Welcome to Happy Office for communication and learning.\n\nElvy will be with you shortly.",
+      "Hello again.\n\nI’m Elvy, a calm communication companion from Happy Office.\n\nYou can send a short message whenever you feel ready.",
+      "Hello! How can I assist you today at Happy Office?"
+    ],
+    "userMessages": [
+      "hello"
+    ],
+    "telegramChatId": "7517285147",
+    "memory": {
+      "telegramFirstName": "Said",
+      "telegramUsername": "@saidrighton",
+      "firstContactAt": "2026-05-08T13:57:36.757Z",
+      "freeTrial": true,
+      "lastUserMessage": "hello",
+      "lastElvyReply": "Hello! How can I assist you today at Happy Office?",
+      "lastIntent": "general",
+      "lastReplyScore": 75,
+      "lastReplyCheckedAt": "2026-05-08T13:57:47.494Z",
+      "lastReplyAutoCorrected": false,
+      "needsPromptReview": false
+    },
+    "paymentNoticeSent": false,
+    "paid": false,
+    "paymentStatus": "Unpaid"
+  }
+]
