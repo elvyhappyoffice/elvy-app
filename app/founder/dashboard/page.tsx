@@ -112,7 +112,7 @@ export default function FounderDashboardPage() {
   const [freeTalkReplies, setFreeTalkReplies] = useState(100);
 
   const [ticketPrice, setTicketPrice] = useState(4);
-  const [repliesPerTicket: clampNumber(Number(repliesPerTicket || 0), 1, MAX_REPLIES_PER_USER), setRepliesPerTicket] = useState(500);
+  const [repliesPerTicket, setRepliesPerTicket] = useState(500);
 
   const [admins, setAdmins] = useState<AdminControl[]>(DEFAULT_ADMINS);
   const [dailyUsers, setDailyUsers] = useState<DailySupportUser[]>([]);
