@@ -1,702 +1,537 @@
 "use client";
 
-import { Fragment, useEffect, useState } from "react";
-import Link from "next/link";
+import { useEffect, useState } from "react";
 
-type UserStatus =
-  | "Visitor"
-  | "Pending"
-  | "Setup Sent"
-  | "In Chat"
-  | "Active"
-  | "Suspended"
-  | "Blocked";
+type AdminKey = "daily_admin" | "talk_admin" | "meet_admin";
 
-type MemoryReminder = {
-  task: string;
-  time?: string;
-  day?: string;
-  frequency?: string;
-  createdAt: string;
+type AdminControl = {
+  username: AdminKey;
+  label: string;
+  room: string;
+  blocked: boolean;
+  password: string;
 };
 
-type UserMemory = {
-  reminders: MemoryReminder[];
-  preferences: {
-    preferredTime?: string;
-    preferredChannel?: string;
-    messageStyle?: string;
-  };
-  patterns: string[];
-  notes: string[];
-  lastIntent?: string;
-  lastUpdated?: string;
-};
-
-type SupportUser = {
+type DailySupportUser = {
   code: string;
   name: string;
-  ageGroup: string;
-  helpType: string;
-  contactMethod: string;
-  contactValue: string;
-  status: UserStatus;
+  status: "Pending" | "Setup Sent" | "In Chat" | "Active" | "Suspended" | "Blocked";
   repliesLimit: number;
   repliesUsed: number;
-  aiCost: number;
-  contactCost: number;
-  startDate: string;
-  endDate: string;
-  adminMessages: string[];
-  userMessages: string[];
-  setupAccessNumber?: string;
+  helpType?: string;
+  contactMethod?: string;
+  contactValue?: string;
+  paymentStatus?: "Unpaid" | "Pending" | "Paid" | "Failed";
+  paymentMethod?: "PayPal" | "Skrill";
+  paymentReference?: string;
+  paidAt?: string;
+  paid?: boolean;
+  adminMessages?: string[];
+  userMessages?: string[];
   telegramChatId?: string;
-  needsAdminReply?: boolean;
-  memory?: UserMemory;
 };
 
-const USERS_KEY = "dailySupportUsers";
-const ROOM_KEY = "dailySupportRoomOpen";
-const CODE_GEN_KEY = "dailySupportCodeGenerationOpen";
-const MAX_USER_MESSAGE_LENGTH = 300;
+type TalkSettings = {
+  totalFreeRepliesRoom?: number;
+  dailyFreeRepliesPerUser?: number;
+};
 
-const TELEGRAM_BOT_LINK = "https://t.me/happy_office_support_bot";
+const AI_SETTINGS_KEY = "founder_ai_settings";
+const ADMIN_CONTROLS_KEY = "founder_admin_controls";
+const HAPPY_OFFICE_KEY = "happy_office_global_open";
 
-async function loadUsersFromServer(): Promise<SupportUser[]> {
+const DAILY_USERS_KEY = "dailySupportUsers";
+const TALK_TOTAL_FREE_USED_KEY = "talk_to_elvy_total_free_used";
+const TALK_SETTINGS_KEY = "talk_to_elvy_settings";
+
+const MAX_REPLIES_PER_USER = 800;
+
+const DEFAULT_ADMINS: AdminControl[] = [
+  {
+    username: "daily_admin",
+    label: "Daily Support Admin",
+    room: "daily-support",
+    blocked: false,
+    password: "1234",
+  },
+  {
+    username: "talk_admin",
+    label: "Talk to Elvy Admin",
+    room: "talk-to-elvy",
+    blocked: false,
+    password: "1234",
+  },
+  {
+    username: "meet_admin",
+    label: "Meet Elvy Admin",
+    room: "meet-elvy",
+    blocked: false,
+    password: "1234",
+  },
+];
+
+function safeParse<T>(value: string | null, fallback: T): T {
+  if (!value) return fallback;
   try {
-    const res = await fetch("/api/daily-support-users");
-    const data = await res.json();
-    return data.users || [];
+    return JSON.parse(value) as T;
   } catch {
-    return [];
+    return fallback;
   }
 }
 
-async function saveUsersToServer(users: SupportUser[]) {
-  await fetch("/api/daily-support-users", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ users }),
-  });
+function clampNumber(value: number, min: number, max: number) {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(Math.max(Math.floor(value), min), max);
 }
 
-function createEmptyMemory(): UserMemory {
+function normalizeDailyUser(user: DailySupportUser): DailySupportUser {
+  const repliesLimit = clampNumber(Number(user.repliesLimit || 0), 0, MAX_REPLIES_PER_USER);
+  const repliesUsed = clampNumber(Number(user.repliesUsed || 0), 0, repliesLimit);
+
   return {
-    reminders: [],
-    preferences: {},
-    patterns: [],
-    notes: [],
+    ...user,
+    repliesLimit,
+    repliesUsed,
+    paymentStatus: user.paymentStatus || "Unpaid",
+    adminMessages: Array.isArray(user.adminMessages) ? user.adminMessages : [],
+    userMessages: Array.isArray(user.userMessages) ? user.userMessages : [],
   };
 }
 
-function uniqueList(items: string[]) {
-  return Array.from(new Set(items.filter(Boolean))).slice(-12);
-}
 
-function detectElvyIntent(message: string) {
-  const text = message.toLowerCase();
+export default function FounderDashboardPage() {
+  const [happyOfficeOpen, setHappyOfficeOpen] = useState(true);
 
-  if (text.includes("remind") || text.includes("don't forget") || text.includes("appointment")) {
-    return "reminder";
-  }
+  const [aiActive, setAiActive] = useState(false);
+  const [confirmAI, setConfirmAI] = useState(false);
+  const [aiBudget, setAiBudget] = useState(5);
+  const [inputTokens, setInputTokens] = useState(2050);
+  const [outputTokens, setOutputTokens] = useState(90);
+  const [inputTokenPrice, setInputTokenPrice] = useState(0.0000004);
+  const [outputTokenPrice, setOutputTokenPrice] = useState(0.0000016);
+  const [freeTalkReplies, setFreeTalkReplies] = useState(100);
 
-  if (text.includes("routine") || text.includes("daily") || text.includes("schedule")) {
-    return "routine";
-  }
+  const [ticketPrice, setTicketPrice] = useState(4);
+  const [repliesPerTicket: clampNumber(Number(repliesPerTicket || 0), 1, MAX_REPLIES_PER_USER), setRepliesPerTicket] = useState(500);
 
-  if (text.includes("prefer") || text.includes("usually") || text.includes("as usual")) {
-    return "preference";
-  }
+  const [admins, setAdmins] = useState<AdminControl[]>(DEFAULT_ADMINS);
+  const [dailyUsers, setDailyUsers] = useState<DailySupportUser[]>([]);
+  const [showUsers, setShowUsers] = useState(false);
+  const [directorMessage, setDirectorMessage] = useState("");
+  const [selectedUserCode, setSelectedUserCode] = useState(""); 
+  // === Payment Control (NEW) ===
+ const [paymentOpen, setPaymentOpen] = useState(false);
 
-  if (text.includes("tired") || text.includes("stress") || text.includes("problem") || text.includes("worried")) {
-    return "support";
-  }
+  // === Payment Settings (NEW) ===
+  const [paypalActive, setPaypalActive] = useState(false);
+  const [paypalLink, setPaypalLink] = useState("");
+  const [skrillActive, setSkrillActive] = useState(false);
+  const [skrillLink, setSkrillLink] = useState("");
 
-  if (text.includes("family") || text.includes("mother") || text.includes("father") || text.includes("child")) {
-    return "family";
-  }
+  const [talkFreeUsed, setTalkFreeUsed] = useState(0);
+  const [talkTotalFreeLimit, setTalkTotalFreeLimit] = useState(100);
 
-  return "general";
-}
-
-function extractTime(message: string) {
-  const timeMatch = message.match(/\b([01]?\d|2[0-3])(?::([0-5]\d))?\s?(am|pm)?\b/i);
-  if (!timeMatch) return undefined;
-
-  const hour = timeMatch[1];
-  const minute = timeMatch[2] || "00";
-  const period = timeMatch[3] ? ` ${timeMatch[3].toUpperCase()}` : "";
-  return `${hour}:${minute}${period}`;
-}
-
-function extractDay(message: string) {
-  const text = message.toLowerCase();
-  const days = [
-    "monday",
-    "tuesday",
-    "wednesday",
-    "thursday",
-    "friday",
-    "saturday",
-    "sunday",
-    "tomorrow",
-    "today",
-  ];
-
-  return days.find((day) => text.includes(day));
-}
-
-function extractFrequency(message: string) {
-  const text = message.toLowerCase();
-
-  if (text.includes("every day") || text.includes("daily")) return "daily";
-  if (text.includes("every week") || text.includes("weekly")) return "weekly";
-  if (text.includes("every month") || text.includes("monthly")) return "monthly";
-  if (text.includes("every friday")) return "weekly-friday";
-
-  return undefined;
-}
-
-function buildUpdatedMemory(user: SupportUser, message: string): UserMemory {
-  const memory = user.memory || createEmptyMemory();
-  const text = message.toLowerCase();
-  const intent = detectElvyIntent(message);
-  const now = new Date().toLocaleString();
-
-  const nextMemory: UserMemory = {
-    reminders: [...(memory.reminders || [])],
-    preferences: { ...(memory.preferences || {}) },
-    patterns: [...(memory.patterns || [])],
-    notes: [...(memory.notes || [])],
-    lastIntent: intent,
-    lastUpdated: now,
-  };
-
-  if (intent === "reminder") {
-    const cleanedTask = message
-      .replace(/remind me to/i, "")
-      .replace(/please/i, "")
-      .trim();
-
-    nextMemory.reminders = [
-      ...nextMemory.reminders,
-      {
-        task: cleanedTask || message,
-        time: extractTime(message),
-        day: extractDay(message),
-        frequency: extractFrequency(message),
-        createdAt: now,
-      },
-    ].slice(-10);
-  }
-
-  if (text.includes("morning")) {
-    nextMemory.preferences.preferredTime = "morning";
-  } else if (text.includes("evening") || text.includes("night")) {
-    nextMemory.preferences.preferredTime = "evening";
-  }
-
-  if (text.includes("short") || text.includes("simple")) {
-    nextMemory.preferences.messageStyle = "short and simple";
-  }
-
-  if (intent === "support") {
-    nextMemory.patterns = uniqueList([...nextMemory.patterns, "needs calm support"]);
-  }
-
-  if (intent === "family") {
-    nextMemory.patterns = uniqueList([...nextMemory.patterns, "family-related support"]);
-  }
-
-  if (intent === "routine") {
-    nextMemory.patterns = uniqueList([...nextMemory.patterns, "routine organization"]);
-  }
-
-  if (message.length <= MAX_USER_MESSAGE_LENGTH) {
-    nextMemory.notes = uniqueList([...nextMemory.notes, `${intent}: ${message.slice(0, 90)}`]);
-  }
-
-  return nextMemory;
-}
-
-function getMemorySummary(memory?: UserMemory) {
-  if (!memory) return "No memory yet";
-
-  const parts = [];
-  if (memory.reminders?.length) parts.push(`${memory.reminders.length} reminder(s)`);
-  if (memory.preferences?.preferredTime) parts.push(`prefers ${memory.preferences.preferredTime}`);
-  if (memory.patterns?.length) parts.push(memory.patterns.slice(-2).join(", "));
-
-  return parts.length ? parts.join(" • ") : "Memory ready";
-}
-
-function getElvyMemoryReply(message: string, user: SupportUser, memory: UserMemory) {
-  const intent = detectElvyIntent(message);
-  const preferredTime = memory.preferences?.preferredTime;
-  const lastReminder = memory.reminders?.[memory.reminders.length - 1];
-
-  if (message.length > MAX_USER_MESSAGE_LENGTH) {
-    return "That is a lot to carry at once. Let’s take one step together. Please share one short message so I can understand you clearly.";
-  }
-
-  if (message.toLowerCase().includes(" and ") || message.split("?").length > 2) {
-    return "I see more than one thing here. Let’s begin with one. What matters most now?";
-  }
-
-  if (intent === "reminder") {
-    if (!lastReminder?.time) {
-      return preferredTime
-        ? `I can help with that. Would you like it in the ${preferredTime}, as you usually prefer?`
-        : "Of course. What time should I remember this for you?";
-    }
-
-    if (!lastReminder?.day && !lastReminder?.frequency) {
-      return `I noted the time: ${lastReminder.time}. Should this be for today, tomorrow, or repeated?`;
-    }
-
-    return "I understand. I will keep this reminder clear and focused.";
-  }
-
-  if (intent === "routine") {
-    return preferredTime
-      ? `Let’s keep it simple. Since you prefer the ${preferredTime}, what is the first step you want to organize?`
-      : "Let’s organize this gently. What is the first step you want to start with?";
-  }
-
-  if (intent === "preference") {
-    return "I understand. I will keep this preference in mind while guiding you.";
-  }
-
-  if (intent === "support") {
-    return "Let’s take one step together. What feels most important right now?";
-  }
-
-  if (intent === "family") {
-    return "Family messages need care. What would you like to say or remember first?";
-  }
-
-  return `I understand, ${user.name}. Please share one clear thing you want help with now.`;
-}
-
-export default function DailySupportPage() {
-  const [role, setRole] = useState<string | null>(null);
-  const [room, setRoom] = useState<string | null>(null);
-  const [dashboardOpen, setDashboardOpen] = useState(false);
-
-  const [users, setUsers] = useState<SupportUser[]>([]);
-  const [roomOpen, setRoomOpen] = useState(true);
-  const [codeGenerationOpen, setCodeGenerationOpen] = useState(true);
-
-  const [name, setName] = useState("");
-  const [ageGroup, setAgeGroup] = useState("18–30");
-  const [contactMethod, setContactMethod] = useState("Telegram");
-  const [contactValue, setContactValue] = useState("");
-
-  const [activeCode, setActiveCode] = useState("");
-  const [openedUser, setOpenedUser] = useState<SupportUser | null>(null);
-  const [chatInput, setChatInput] = useState("");
-  const [storageReady, setStorageReady] = useState(false);
-  const [openAdminChats, setOpenAdminChats] = useState<string[]>([]);
-  const [adminReplyInputs, setAdminReplyInputs] = useState<Record<string, string>>({});
-
-  useEffect(() => {
-    setRole(localStorage.getItem("adminRole"));
-    setRoom(localStorage.getItem("adminRoom"));
-
-loadUsersFromServer().then((loadedUsers) => {
-  setUsers(loadedUsers);
-  setStorageReady(true);
-});
-    const savedRoom = localStorage.getItem(ROOM_KEY);
-    if (savedRoom !== null) setRoomOpen(savedRoom === "true");
-
-    const savedCodeGen = localStorage.getItem(CODE_GEN_KEY);
-    if (savedCodeGen !== null) setCodeGenerationOpen(savedCodeGen === "true");
-  }, []);
-
-  // Local real-time refresh: reads saved users every second without
-  // regenerating codes or clearing registered users. This keeps the
-  // admin dashboard updated when the user sends a message.
-  useEffect(() => {
-    if (!storageReady) return;
-const interval = window.setInterval(async () => {
-  const latestUsers = await loadUsersFromServer();
-
-  setUsers((currentUsers) => {
-        const currentString = JSON.stringify(currentUsers);
-        const latestString = JSON.stringify(latestUsers);
-
-        if (currentString !== latestString) {
-          return latestUsers;
-        }
-
-        return currentUsers;
+  async function loadRealData() {
+    try {
+      const res = await fetch("/api/daily-support-users", {
+        cache: "no-store",
       });
-    }, 1000);
+
+      const data = await res.json();
+
+      if (Array.isArray(data?.users)) {
+        setDailyUsers(data.users.map(normalizeDailyUser));
+      }
+    } catch (error) {
+      console.error("Could not load Daily Support users from server:", error);
+
+      const fallbackUsers = safeParse<DailySupportUser[]>(
+        localStorage.getItem(DAILY_USERS_KEY),
+        []
+      );
+
+      setDailyUsers(fallbackUsers);
+    }
+
+    const talkSettings = safeParse<TalkSettings>(
+      localStorage.getItem(TALK_SETTINGS_KEY),
+      {}
+    );
+
+    const talkUsed = Number(localStorage.getItem(TALK_TOTAL_FREE_USED_KEY) || "0");
+
+    setTalkFreeUsed(talkUsed);
+    setTalkTotalFreeLimit(talkSettings.totalFreeRepliesRoom || freeTalkReplies || 100);
+  }
+
+  useEffect(() => {
+    const savedAI = safeParse<any>(localStorage.getItem(AI_SETTINGS_KEY), null);
+    const savedAdmins = safeParse<AdminControl[]>(
+      localStorage.getItem(ADMIN_CONTROLS_KEY),
+      DEFAULT_ADMINS
+    );
+// === Load Payment Setting (NEW) ===
+fetch("/api/founder-settings")
+  .then((res) => res.json())
+  .then((data) => {
+    if (data?.settings) {
+      setPaymentOpen(data.settings.automaticPaymentOpen);
+    }
+  })
+  .catch(() => {});
+
+// === Load Payment Links Settings (NEW) ===
+fetch("/api/payment-settings")
+  .then((res) => res.json())
+  .then((data) => {
+    if (data?.settings) {
+      setPaypalActive(Boolean(data.settings.paypalActive));
+      setPaypalLink(data.settings.paypalLink || "");
+      setSkrillActive(Boolean(data.settings.skrillActive));
+      setSkrillLink(data.settings.skrillLink || "");
+    }
+  })
+  .catch(() => {});
+
+    const officeOpen = localStorage.getItem(HAPPY_OFFICE_KEY);
+
+    if (savedAI) {
+      setAiActive(savedAI.aiActive ?? false);
+      setAiBudget(savedAI.aiBudget ?? 5);
+      setInputTokens(savedAI.inputTokens ?? 2050);
+      setOutputTokens(savedAI.outputTokens ?? 90);
+      setInputTokenPrice(savedAI.inputTokenPrice ?? 0.0000004);
+      setOutputTokenPrice(savedAI.outputTokenPrice ?? 0.0000016);
+      setFreeTalkReplies(savedAI.freeTalkReplies ?? 100);
+      setTicketPrice(savedAI.ticketPrice ?? 4);
+      setRepliesPerTicket(clampNumber(Number(savedAI.repliesPerTicket ?? 500), 1, MAX_REPLIES_PER_USER));
+    }
+
+    setAdmins(savedAdmins);
+
+    if (officeOpen !== null) {
+      setHappyOfficeOpen(officeOpen === "true");
+    }
+
+    loadRealData();
+
+    const interval = window.setInterval(() => {
+      void loadRealData();
+    }, 1500);
 
     return () => window.clearInterval(interval);
-  }, [storageReady]);
+  }, []);
 
-  useEffect(() => {
-    localStorage.setItem(ROOM_KEY, String(roomOpen));
-  }, [roomOpen]);
+  function saveAll() {
+    localStorage.setItem(
+      AI_SETTINGS_KEY,
+      JSON.stringify({
+        aiActive,
+        aiBudget,
+        inputTokens,
+        outputTokens,
+        inputTokenPrice,
+        outputTokenPrice,
+        freeTalkReplies,
+        ticketPrice,
+        repliesPerTicket,
+      })
+    );
 
-  useEffect(() => {
-    localStorage.setItem(CODE_GEN_KEY, String(codeGenerationOpen));
-  }, [codeGenerationOpen]);
+    localStorage.setItem(ADMIN_CONTROLS_KEY, JSON.stringify(admins));
+    localStorage.setItem(HAPPY_OFFICE_KEY, String(happyOfficeOpen));
 
-  const isAdmin =
-  role === "founder" || (role === "admin" && room === "daily-support");
-
-  function generateCode() {
-    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    let code = "ELVY-";
-
-    for (let i = 0; i < 5; i++) {
-      code += chars[Math.floor(Math.random() * chars.length)];
-    }
-
-    return code;
+    alert("Founder settings saved");
   }
 
-  function generateSetupNumber() {
-    return Math.floor(1000 + Math.random() * 9000).toString();
+  function enterRoom(room: "daily-support" | "talk-to-elvy" | "meet-elvy") {
+    localStorage.setItem("adminRole", "founder");
+    localStorage.setItem("adminRoom", room);
+    window.location.href = `/sections/${room}`;
   }
-
-  function updateUser(code: string, changes: Partial<SupportUser>) {
-    setUsers((prev) => {
-      const updated = prev.map((u) =>
-        u.code === code ? { ...u, ...changes } : u
-      );
-      saveUsersToServer(updated);
-      return updated;
-    });
-
-    if (openedUser?.code === code) {
-      setOpenedUser((prev) => (prev ? { ...prev, ...changes } : prev));
-    }
-  }
-
-  async function sendTelegramMessage(message: string, chatId?: string) {
-    const res = await fetch("/api/telegram/send", {
+// === Toggle Payment (NEW) ===
+async function toggleAutomaticPayment() {
+  try {
+    const res = await fetch("/api/founder-settings", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        message,
-        chatId,
+        automaticPaymentOpen: !paymentOpen,
       }),
     });
 
-    return res.json();
+    const data = await res.json();
+
+    if (data?.settings) {
+      setPaymentOpen(data.settings.automaticPaymentOpen);
+    }
+  } catch (err) {
+    console.error("Payment toggle failed", err);
   }
+}
 
-  async function syncTelegramUsers() {
-    try {
-      const res = await fetch("/api/telegram/send");
-      const data = await res.json();
-
-      if (!data.success) {
-        alert("Telegram sync failed.");
-        console.log(data);
-        return;
-      }
-
-      setUsers((prev) => {
-        const updated = prev.map((user) => {
-          if (user.contactMethod !== "Telegram") return user;
-
-          const userContact = user.contactValue.trim().toLowerCase();
-          const normalizedUserContact = userContact.startsWith("@")
-            ? userContact
-            : `@${userContact}`;
-
-          const match = data.users.find(
-            (tg: any) =>
-              String(tg.username).trim().toLowerCase() === normalizedUserContact
-          );
-
-          if (!match) return user;
-
-          return {
-            ...user,
-            telegramChatId: String(match.chatId),
-          };
-        });
-
-        saveUsersToServer(updated);
-        return updated;
-      });
-
-      alert("Telegram users synced successfully.");
-    } catch (error) {
-      console.log(error);
-      alert("Telegram sync error.");
-    }
-  }
-
-  async function createUser() {
-    if (!codeGenerationOpen) {
-      window.alert("Code generation is currently closed. Please try again later.");
-      return;
-    }
-
-    if (!name.trim()) {
-      window.alert("Please enter your name first.");
-      return;
-    }
-
-    if (!contactValue.trim()) {
-      window.alert("Please add your Telegram username first. Example: @username");
-      return;
-    }
-
-    const today = new Date();
-    const end = new Date();
-    end.setMonth(end.getMonth() + 1);
-
-    const cleanTelegram = contactValue.trim().startsWith("@")
-      ? contactValue.trim().toLowerCase()
-      : `@${contactValue.trim().toLowerCase()}`;
-
-    const newUser: SupportUser = {
-      code: generateCode(),
-      name: name.trim(),
-      ageGroup,
-      helpType: "General support",
-      contactMethod,
-      contactValue: contactMethod === "Telegram" ? cleanTelegram : contactValue.trim(),
-      status: "Pending",
-      repliesLimit: 100,
-      repliesUsed: 0,
-      aiCost: 0,
-      contactCost: 0,
-      startDate: today.toLocaleDateString(),
-      endDate: end.toLocaleDateString(),
-      adminMessages: [],
-      userMessages: [],
-      memory: createEmptyMemory(),
-    };
-
-    const updatedUsers = [newUser, ...users];
-
-    setUsers(updatedUsers);
-
-    const notice =
-      `Your request has been received.\n\n` +
-      `Your code is: ${newUser.code}\n\n` +
-      `Please open our Telegram bot and press START:\n${TELEGRAM_BOT_LINK}\n\n` +
-      `Then return here and wait for your access number.`;
-
-    // Show the old popup immediately, like before.
-    window.alert(notice);
-
-    // Save to the server in the background so the popup is not blocked or delayed.
-    saveUsersToServer(updatedUsers).catch((error) => {
-      console.log("Daily Support save error:", error);
-      window.alert("The code was shown, but saving to the server failed. Please check /api/daily-support-users.");
+// === Save Payment Links Settings (NEW) ===
+async function savePaymentSettings() {
+  try {
+    const res = await fetch("/api/payment-settings", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        paypalActive,
+        paypalLink,
+        skrillActive,
+        skrillLink,
+      }),
     });
 
-    setName("");
-    setContactValue("");
+    const data = await res.json();
+
+    if (data?.ok) {
+      alert("Payment settings saved.");
+    } else {
+      alert("Could not save payment settings.");
+    }
+  } catch (err) {
+    console.error("Payment settings save failed", err);
+    alert("Could not save payment settings.");
   }
+}
 
-  async function sendSetupMessage(code: string) {
-    const user = users.find((u) => u.code === code);
-    if (!user) return;
-
-    if (user.contactMethod === "Telegram" && !user.telegramChatId) {
-      alert(
-        "This Telegram user is not synced yet. Ask the user to start the bot, then click Sync Telegram Users."
-      );
+  function toggleAI() {
+    if (!confirmAI) {
+      alert("Please check the confirmation box first.");
       return;
     }
-
-    const setupNumber = generateSetupNumber();
-
-    const setupMessage =
-      `Hello ${user.name}, this is Happy Office.\n\n` +
-      `Your access number is: ${setupNumber}\n\n` +
-      `Use this full code to open private chat with the Happy Office team:\n\n` +
-      `${user.code}-${setupNumber}\n\n` +
-      `After opening the private chat, the team will guide you through activation.`;
-
-    try {
-      const data = await sendTelegramMessage(setupMessage, user.telegramChatId);
-
-      if (!data.success) {
-        alert("Telegram failed. Check token, chat ID, or route.");
-        console.log(data);
-        return;
-      }
-
-      updateUser(code, {
-        status: "Setup Sent",
-        setupAccessNumber: setupNumber,
-        adminMessages: [...user.adminMessages, setupMessage],
-        contactCost: user.contactCost + 0.01,
-      });
-
-      alert("Access number sent successfully.");
-    } catch (error) {
-      console.log(error);
-      alert("Telegram request failed.");
-    }
+    setAiActive(!aiActive);
   }
 
-  function openPrivateChat() {
-    const entered = activeCode.trim().toUpperCase();
+  function resetAdminPassword(username: AdminKey) {
+    const newPassword = prompt("Enter new password:");
+    if (!newPassword) return;
 
-    const user = users.find(
-      (u) => `${u.code}-${u.setupAccessNumber}` === entered
+    setAdmins((prev) =>
+      prev.map((admin) =>
+        admin.username === username ? { ...admin, password: newPassword } : admin
+      )
     );
 
-    if (!user) {
-      alert(
-        "Chat access denied. Please enter the full code and access number sent to you."
-      );
-      return;
-    }
-
-    if (user.status === "Blocked" || user.status === "Suspended") {
-      alert("This code is not active at the moment.");
-      return;
-    }
-
-    if (user.status !== "Setup Sent" && user.status !== "In Chat") {
-      alert("This code is not ready for admin chat.");
-      return;
-    }
-
-    setOpenedUser(user);
-    updateUser(user.code, { status: "In Chat" });
+    alert("Password reset saved in founder controls.");
   }
 
-  function sendUserChatMessage() {
-    if (!openedUser || !chatInput.trim()) return;
-
-    if (chatInput.length > MAX_USER_MESSAGE_LENGTH) {
-      const gentleLimitMessage =
-        "That is a lot to carry at once. Let’s take one step together. Please share your message in one short sentence.";
-
-      updateUser(openedUser.code, {
-        adminMessages: [...openedUser.adminMessages, gentleLimitMessage],
-      });
-
-      setOpenedUser({
-        ...openedUser,
-        adminMessages: [...openedUser.adminMessages, gentleLimitMessage],
-      });
-
-      setChatInput("");
-      return;
-    }
-
-    const updatedMessages = [...openedUser.userMessages, chatInput];
-
-    if (openedUser.status === "Active") {
-      const updatedMemory = buildUpdatedMemory(openedUser, chatInput);
-      const elvyReply = getElvyMemoryReply(chatInput, openedUser, updatedMemory);
-      const updatedAdminMessages = [...openedUser.adminMessages, elvyReply];
-
-      updateUser(openedUser.code, {
-        userMessages: updatedMessages,
-        adminMessages: updatedAdminMessages,
-        repliesUsed: openedUser.repliesUsed + 1,
-        needsAdminReply: false,
-        memory: updatedMemory,
-        aiCost: openedUser.aiCost + 0.01,
-      });
-
-      setOpenedUser({
-        ...openedUser,
-        userMessages: updatedMessages,
-        adminMessages: updatedAdminMessages,
-        repliesUsed: openedUser.repliesUsed + 1,
-        needsAdminReply: false,
-        memory: updatedMemory,
-        aiCost: openedUser.aiCost + 0.01,
-      });
-    } else {
-      updateUser(openedUser.code, {
-        userMessages: updatedMessages,
-        repliesUsed: openedUser.repliesUsed + 1,
-        needsAdminReply: true,
-      });
-
-      setOpenedUser({
-        ...openedUser,
-        userMessages: updatedMessages,
-        repliesUsed: openedUser.repliesUsed + 1,
-        needsAdminReply: true,
-      });
-    }
-
-    setChatInput("");
+  function toggleAdminBlock(username: AdminKey) {
+    setAdmins((prev) =>
+      prev.map((admin) =>
+        admin.username === username
+          ? { ...admin, blocked: !admin.blocked }
+          : admin
+      )
+    );
   }
 
-  async function activateElvy(code: string) {
-    const user = users.find((u) => u.code === code);
-    if (!user) return;
+  async function sendDirectorMessage() {
+    const cleanMessage = directorMessage.trim();
 
-    if (user.contactMethod === "Telegram" && !user.telegramChatId) {
-      alert("This user must be synced with Telegram before activating Elvy.");
+    if (!selectedUserCode || !cleanMessage) {
+      alert("Select a user and write a message first.");
       return;
     }
 
-    const elvyMessage =
-      `Hello ${user.name}.\n\n` +
-      `I am Elvy.\n\n` +
-      `Your support is now active. This space is calm, simple, and here to help you with clear and meaningful communication.\n\n` +
-      `Please send short and focused messages so I can understand you clearly.`;
+    const selectedUser = dailyUsers.find((user) => user.code === selectedUserCode);
+
+    if (!selectedUser) {
+      alert("Selected user was not found. Please refresh real data and try again.");
+      return;
+    }
+
+    const finalMessage = `Director of Happy Office: ${cleanMessage}`;
+
+    const updatedUsers = dailyUsers.map((user) => {
+      if (user.code !== selectedUserCode) return user;
+
+      return {
+        ...user,
+        adminMessages: [...(user.adminMessages || []), finalMessage],
+      };
+    });
 
     try {
-      const data = await sendTelegramMessage(elvyMessage, user.telegramChatId);
+      const saveRes = await fetch("/api/daily-support-users", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ users: updatedUsers }),
+      });
 
-      if (!data.success) {
-        alert("Elvy welcome message was not sent. Check Telegram connection.");
-        console.log(data);
+      if (!saveRes.ok) {
+        alert("Message was not saved. Please check /api/daily-support-users.");
         return;
       }
 
-      updateUser(code, {
-        status: "Active",
-        adminMessages: [...user.adminMessages, elvyMessage],
-        contactCost: user.contactCost + 0.01,
-        memory: user.memory || createEmptyMemory(),
+      setDailyUsers(updatedUsers);
+      setDirectorMessage("");
+
+      if (selectedUser.telegramChatId) {
+        const telegramRes = await fetch("/api/telegram/send", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            chatId: selectedUser.telegramChatId,
+            message: finalMessage,
+          }),
+        });
+
+        const telegramData = await telegramRes.json();
+
+        if (!telegramData?.success) {
+          alert("Message saved, but Telegram sending failed. Check the Telegram route or chat ID.");
+          return;
+        }
+
+        alert("Director message saved and sent to Telegram.");
+        return;
+      }
+
+      alert("Message saved. This user has no Telegram chat ID yet, so it was not sent to Telegram.");
+    } catch (error) {
+      console.error("Director message failed:", error);
+      alert("Message failed. Check the console or server logs.");
+    }
+  }
+
+
+  async function saveDailyUsersToServer(updatedUsers: DailySupportUser[], successMessage?: string) {
+    const cleanedUsers = updatedUsers.map(normalizeDailyUser);
+
+    try {
+      const res = await fetch("/api/daily-support-users", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ users: cleanedUsers }),
       });
 
-      alert("Elvy activated and welcome message sent.");
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok || data?.success === false) {
+        alert("Could not save the user changes. Check /api/daily-support-users.");
+        return;
+      }
+
+      setDailyUsers(Array.isArray(data?.users) ? data.users.map(normalizeDailyUser) : cleanedUsers);
+
+      if (successMessage) {
+        alert(successMessage);
+      }
     } catch (error) {
-      console.log(error);
-      alert("Elvy activation failed.");
+      console.error("Could not save Daily Support users:", error);
+      alert("Could not save the user changes. Check server logs.");
     }
   }
 
-  function canDeleteUser(user: SupportUser) {
-    if (user.status !== "Active") return true;
-    return user.repliesUsed >= user.repliesLimit;
+  function updateDailyUserLocally(
+    code: string,
+    updater: (user: DailySupportUser) => DailySupportUser
+  ) {
+    return dailyUsers.map((user) => {
+      if (user.code !== code) return normalizeDailyUser(user);
+      return normalizeDailyUser(updater(user));
+    });
   }
 
-  function deleteUser(code: string) {
-    const user = users.find((u) => u.code === code);
-    if (!user) return;
+  async function setUserReplies(code: string) {
+    const currentUser = dailyUsers.find((user) => user.code === code);
+    if (!currentUser) return;
 
-    if (!canDeleteUser(user)) {
-      alert("Active users cannot be deleted until all replies are used.");
-      return;
-    }
+    const value = prompt(
+      `Enter total replies for ${currentUser.name}. Maximum is ${MAX_REPLIES_PER_USER}.`,
+      String(currentUser.repliesLimit || repliesPerTicket || 500)
+    );
 
-    setUsers((prev) => {
-      const updated = prev.filter((u) => u.code !== code);
-      saveUsersToServer(updated);
-      return updated;
+    if (value === null) return;
+
+    const totalReplies = clampNumber(Number(value), 0, MAX_REPLIES_PER_USER);
+
+    const updatedUsers = updateDailyUserLocally(code, (user) => ({
+      ...user,
+      repliesLimit: totalReplies,
+      repliesUsed: Math.min(Number(user.repliesUsed || 0), totalReplies),
+      paymentNoticeSent: false,
+    } as DailySupportUser));
+
+    await saveDailyUsersToServer(updatedUsers, `Replies set to ${totalReplies}.`);
+  }
+
+  async function resetUserUsedReplies(code: string) {
+    const updatedUsers = updateDailyUserLocally(code, (user) => ({
+      ...user,
+      repliesUsed: 0,
+      paymentNoticeSent: false,
+    } as DailySupportUser));
+
+    await saveDailyUsersToServer(updatedUsers, "Used replies reset to 0.");
+  }
+
+  async function activateUser(code: string) {
+    const updatedUsers = updateDailyUserLocally(code, (user) => {
+      const limit = clampNumber(
+        Number(user.repliesLimit || repliesPerTicket || 500),
+        1,
+        MAX_REPLIES_PER_USER
+      );
+
+      return {
+        ...user,
+        status: "Active",
+        repliesLimit: limit,
+        repliesUsed: Math.min(Number(user.repliesUsed || 0), limit),
+        paymentStatus: "Paid",
+        paid: true,
+        paidAt: user.paidAt || new Date().toISOString(),
+        paymentNoticeSent: false,
+      } as DailySupportUser;
     });
 
-    if (openedUser?.code === code) setOpenedUser(null);
+    await saveDailyUsersToServer(updatedUsers, "User activated.");
+  }
+
+  async function suspendUser(code: string) {
+    const updatedUsers = updateDailyUserLocally(code, (user) => ({
+      ...user,
+      status: "Suspended",
+    } as DailySupportUser));
+
+    await saveDailyUsersToServer(updatedUsers, "User suspended.");
+  }
+
+  async function blockUser(code: string) {
+    const updatedUsers = updateDailyUserLocally(code, (user) => ({
+      ...user,
+      status: "Blocked",
+    } as DailySupportUser));
+
+    await saveDailyUsersToServer(updatedUsers, "User blocked.");
+  }
+
+  async function deleteUser(code: string) {
+    const currentUser = dailyUsers.find((user) => user.code === code);
+    if (!currentUser) return;
+
+    const confirmDelete = confirm(`Delete ${currentUser.name} from Daily Support users?`);
+    if (!confirmDelete) return;
+
+    const updatedUsers = dailyUsers
+      .filter((user) => user.code !== code)
+      .map(normalizeDailyUser);
+
+    await saveDailyUsersToServer(updatedUsers, "User deleted.");
   }
 
   function logout() {
@@ -706,576 +541,753 @@ const interval = window.setInterval(async () => {
     window.location.href = "/admin";
   }
 
-  function toggleAdminChat(code: string) {
-    setOpenAdminChats((prev) =>
-      prev.includes(code)
-        ? prev.filter((c) => c !== code)
-        : [...prev, code]
-    );
-  }
+  const inputCostPerReply = inputTokens * inputTokenPrice;
+  const outputCostPerReply = outputTokens * outputTokenPrice;
+  const pricePerReply = inputCostPerReply + outputCostPerReply;
 
-  function sendAdminReply(code: string) {
-    const user = users.find((u) => u.code === code);
-    if (!user) return;
+  const totalPossibleAIReplies =
+    pricePerReply > 0 ? Math.floor(aiBudget / pricePerReply) : 0;
 
-    const reply = adminReplyInputs[code]?.trim();
-    if (!reply) return;
+  const costPerTicket = pricePerReply * repliesPerTicket;
 
-    updateUser(code, {
-      adminMessages: [...user.adminMessages, reply],
-      needsAdminReply: false,
-    });
+  const totalTicketsAvailable =
+    costPerTicket > 0 ? Math.floor(aiBudget / costPerTicket) : 0;
 
-    setAdminReplyInputs((prev) => ({
-      ...prev,
-      [code]: "",
-    }));
-  }
+  const totalDailyUsers = dailyUsers.length;
+  const activeDailyUsers = dailyUsers.filter((u) => u.status === "Active");
+  const waitingDailyUsers = dailyUsers.filter(
+    (u) => u.status === "Pending" || u.status === "Setup Sent" || u.status === "In Chat"
+  );
+  const blockedDailyUsers = dailyUsers.filter((u) => u.status === "Blocked");
 
-  function rowColor(status: UserStatus) {
-    if (status === "Active") return "bg-green-50";
-    if (status === "Blocked") return "bg-red-50";
-    if (status === "Suspended") return "bg-gray-100";
-    return "bg-yellow-50";
-  }
-
-  function statusBadge(status: UserStatus) {
-    if (status === "Active")
-      return "bg-green-100 text-green-800 border-green-500";
-    if (status === "Blocked") return "bg-red-100 text-red-800 border-red-500";
-    if (status === "Suspended")
-      return "bg-gray-100 text-gray-800 border-gray-500";
-    return "bg-yellow-100 text-yellow-800 border-yellow-500";
-  }
-
-  const activeUsers = users.filter((u) => u.status === "Active").length;
-
-  const waitingUsers = users.filter(
-    (u) =>
-      u.status === "Pending" ||
-      u.status === "Setup Sent" ||
-      u.status === "In Chat"
+  const dailyRepliesSold = dailyUsers.filter(
+    (user) =>
+      user.status === "Active" ||
+      user.paymentStatus === "Paid" ||
+      Boolean(user.paidAt)
   ).length;
 
-  const totalReplies = users.reduce((s, u) => s + u.repliesUsed, 0);
+  const dailyRepliesUsed = dailyUsers.reduce(
+    (sum, user) => sum + Number(user.repliesUsed || 0),
+    0
+  );
+
+  const dailyRepliesLeft = dailyUsers.reduce(
+    (sum, user) =>
+      sum +
+      Math.max(
+        Number(user.repliesLimit || 0) - Number(user.repliesUsed || 0),
+        0
+      ),
+    0
+  );
+
+  const ticketsSold = dailyUsers.filter(
+    (user) =>
+      user.status === "Active" ||
+      user.paymentStatus === "Paid" ||
+      Boolean(user.paidAt) ||
+      Boolean(user.paid)
+  ).length;
+
+  const ticketsRemaining = Math.max(totalTicketsAvailable - ticketsSold, 0);
+  const ticketGenerationOpen = aiActive && ticketsRemaining > 0;
+  const grossIncome = ticketsSold * ticketPrice;
+  const estimatedAICost = (dailyRepliesUsed + talkFreeUsed) * pricePerReply;
+  const reservedTicketAICost = ticketsSold * costPerTicket;
+  const netProfit = grossIncome - reservedTicketAICost;
+  const talkFreeLeft = Math.max(talkTotalFreeLimit - talkFreeUsed, 0);
 
   return (
-    <main
-      className="relative min-h-screen bg-cover bg-center text-[#4b2a12]"
-      style={{ backgroundImage: "url('/images/daily-support.png')" }}
-    >
-{role === "founder" ? (
-  <button
-    onClick={() => {
-      window.location.href = "/founder/dashboard";
-    }}
-    className="absolute left-[2%] top-[4%] z-30 rounded-full bg-black px-6 py-3 text-white"
-  >
-    ← Back to Dashboard
-  </button>
-) : (
-  <Link
-    href="/happy-office"
-    className="absolute left-[2%] top-[4%] z-30 rounded-full bg-black px-6 py-3 text-white"
-  >
-    ← Back to Happy Office
-  </Link>
-)}
-
-      {isAdmin && (
-        <div className="absolute right-[2%] top-[4%] z-40 flex gap-3">
-          <button
-            onClick={() => setDashboardOpen(!dashboardOpen)}
-            className="rounded-xl bg-[#7a3b1d] px-5 py-3 font-bold text-white"
-          >
-            Dashboard
-          </button>
+    <main className="min-h-screen bg-[#f5e6d3] p-6 text-[#3b2114]">
+      <div className="mx-auto max-w-7xl space-y-6">
+        <div className="flex items-center justify-between rounded-2xl bg-white p-5 shadow">
+          <div>
+            <h1 className="text-3xl font-bold text-[#7a3b1d]">
+              Founder Dashboard
+            </h1>
+            <p className="text-sm">
+              Real control center for Happy Office, Daily Support, and Talk to Elvy.
+            </p>
+          </div>
 
           <button
             onClick={logout}
-            className="rounded-xl bg-black px-5 py-3 font-bold text-white"
+            className="rounded-xl bg-black px-5 py-2 font-bold text-white"
           >
             Logout
           </button>
         </div>
-      )}
 
-{!dashboardOpen && (
-  <section className="absolute left-[10%] top-[12%] z-20 h-[130%] w-[80%] overflow-hidden rounded-3xl bg-white/90 p-6 shadow-x2 backdrop-blur">
-    <div className="grid h-full grid-cols-[1.1fr_0.9fr] gap-5">
-      {/* LEFT SIDE */}
-      <div className="flex h-full flex-col justify-center overflow-hidden rounded-2xl bg-[#fffaf5] p-8 shadow">
-        <h1 className="text-4xl font-bold text-[#7a3b1d]">Daily Support</h1>
-
-        <p className="mt-4 text-lg font-semibold">
-          Welcome to Daily Support Room
-        </p>
-
-        <p className="mt-5 text-base font-semibold text-[#6b4428]">
-          How it works
-        </p>
-
-<p className="mt-2 text-base leading-relaxed text-[#6b4428]">
-  Add your details on the right to receive your access code.
-</p>
-
-<p className="mt-1 text-base leading-relaxed text-[#6b4428]">
-  You can also continue through Telegram:
-</p>
-
-<a
-  href="https://t.me/happy_office_support_bot"
-  target="_blank"
-  rel="noopener noreferrer"
-  className="mt-2 inline-block rounded-lg bg-[#2AABEE] px-4 py-2 text-sm font-bold text-white hover:opacity-90"
->
-  Open Telegram Support
-</a>
-
-<p className="mt-4 text-base leading-relaxed text-[#6b4428]">
-  WhatsApp support will be available soon.
-</p>
-
-<button
-  type="button"
-  disabled
-  className="mt-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-bold text-white opacity-60"
->
-  WhatsApp Coming Soon
-</button>
-      </div>
-
-      {/* RIGHT SIDE */}
-
-      {/* RIGHT SIDE */}
-      <div className="flex h-full flex-col gap-3 overflow-hidden">
-        <div className="rounded-2xl bg-white/95 p-4 shadow">
-          <h2 className="text-2xl font-bold text-[#7a3b1d]">
-            Tell me about you
-          </h2>
-
-          <p className="mt-1 text-sm">
-            Add simple details so Happy Office can prepare your access code.
-          </p>
-
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="What should we call you?"
-            className="mt-3 w-full rounded-xl border border-[#7a3b1d] px-4 py-2"
-          />
-
-          <select
-            value={ageGroup}
-            onChange={(e) => setAgeGroup(e.target.value)}
-            className="mt-2 w-full rounded-xl border border-[#7a3b1d] px-4 py-2"
-          >
-            <option>Under 18</option>
-            <option>18–30</option>
-            <option>31–45</option>
-            <option>46+</option>
-          </select>
-
-          <select
-            value={contactMethod}
-            onChange={(e) => setContactMethod(e.target.value)}
-            className="mt-2 w-full rounded-xl border border-[#7a3b1d] px-4 py-2"
-          >
-            <option>Telegram</option>
-            <option>WhatsApp</option>
-          </select>
-
-          <input
-            value={contactValue}
-            onChange={(e) => setContactValue(e.target.value)}
-            placeholder="Telegram username, example: @username"
-            className="mt-2 w-full rounded-xl border border-[#7a3b1d] px-4 py-2"
-          />
-
+        <section className="grid gap-4 md:grid-cols-3">
           <button
-            onClick={createUser}
-            className="mt-3 w-full rounded-xl bg-[#7a3b1d] px-6 py-3 font-bold text-white"
+            onClick={() => enterRoom("daily-support")}
+            className="rounded-2xl bg-white p-5 text-center font-bold shadow hover:bg-yellow-50"
           >
-            Generate My Access Code
-          </button>
-        </div>
-
-        <div className="rounded-2xl bg-[#f7efe6] p-4 shadow">
-          <h2 className="text-xl font-bold text-[#7a3b1d]">
-            To contact Happy Office team, please enter your access code.
-          </h2>
-
-          <p className="mt-1 text-sm">
-            If you already have your access code and number, enter them here.
-            If not, generate your access code first. Happy Office team will then send your access number.
-          </p>
-
-          <input
-            value={activeCode}
-            onChange={(e) => setActiveCode(e.target.value)}
-            placeholder="Example: ELVY-7K2P9-4821"
-            className="mt-3 w-full rounded-xl border border-[#7a3b1d] px-4 py-2"
-          />
-
-          <button
-            onClick={openPrivateChat}
-            className="mt-3 w-full rounded-xl bg-black px-6 py-3 font-bold text-white"
-          >
-            Continue
+            Enter Daily Support as Admin
           </button>
 
-          <p className="mt-2 text-sm">
-            Your code is personal. Please do not share it with others.
-          </p>
-        </div>
-      </div>
-    </div>
-  </section>
-)}
-      {openedUser && !dashboardOpen && (
-        <div className="fixed right-6 top-[18%] z-50 h-[70%] w-[360px] rounded-2xl bg-white p-5 shadow-2xl">
-          <h2 className="text-xl font-bold text-[#7a3b1d]">
-            Private Chat with Happy Office
+          <button
+            onClick={() => enterRoom("talk-to-elvy")}
+            className="rounded-2xl bg-white p-5 text-center font-bold shadow hover:bg-yellow-50"
+          >
+            Enter Talk to Elvy as Admin
+          </button>
+
+          <button
+            onClick={() => enterRoom("meet-elvy")}
+            className="rounded-2xl bg-white p-5 text-center font-bold shadow hover:bg-yellow-50"
+          >
+            Enter Meet Elvy as Admin
+          </button>
+        </section>
+
+        <section className="rounded-2xl bg-white p-5 shadow">
+          <h2 className="mb-4 text-2xl font-bold text-[#7a3b1d]">
+            Real Room Activity
           </h2>
 
-          <p className="text-sm font-semibold text-[#4b2a12]">
-            Code: {openedUser.code}
-          </p>
+          <div className="grid gap-4 md:grid-cols-4">
+            <div className="rounded-xl bg-[#f5e6d3] p-4">
+              <p>Total Users</p>
+              <p className="text-3xl font-bold">{totalDailyUsers}</p>
+            </div>
 
-          {openedUser.status === "Active" && (
-            <p className="text-sm font-semibold text-green-700">
-              Elvy memory is active: {getMemorySummary(openedUser.memory)}
-            </p>
-          )}
+            <div className="rounded-xl bg-green-50 p-4">
+              <p>Active Daily Users</p>
+              <p className="text-3xl font-bold">{activeDailyUsers.length}</p>
+            </div>
 
-          <div className="mt-4 h-[56%] overflow-y-auto rounded-xl border bg-[#faf7f2] p-4">
-            {openedUser.adminMessages.map((m, i) => (
-              <div
-                key={`a-${i}`}
-                className="mb-3 whitespace-pre-line rounded-xl bg-[#7a3b1d] p-3 text-white"
-              >
-                Happy Office: {m}
-              </div>
-            ))}
+            <div className="rounded-xl bg-[#f5e6d3] p-4">
+              <p>Daily Replies Sold</p>
+              <p className="text-3xl font-bold">{dailyRepliesSold}</p>
+              <p className="mt-1 text-xs text-[#6b4428]">
+                Activated tickets
+              </p>
+            </div>
 
-            {openedUser.userMessages.map((m, i) => (
-              <div
-                key={`u-${i}`}
-                className="mb-3 rounded-xl bg-white p-3 shadow"
-              >
-                You: {m}
-              </div>
-            ))}
+            <div className="rounded-xl bg-[#f5e6d3] p-4">
+              <p>Talk to Elvy Free Used</p>
+              <p className="text-3xl font-bold">
+                {talkFreeUsed}/{talkTotalFreeLimit}
+              </p>
+              <p className="mt-1 text-xs text-[#6b4428]">
+                Free replies provided
+              </p>
+            </div>
           </div>
 
-          <textarea
-            maxLength={MAX_USER_MESSAGE_LENGTH + 80}
-            value={chatInput}
-            onChange={(e) => setChatInput(e.target.value)}
-            placeholder={openedUser.status === "Active" ? "Write one short message for Elvy..." : "Write one short message..."}
-            className="mt-4 h-24 w-full rounded-xl border px-4 py-3"
-          />
+          <button
+            onClick={loadRealData}
+            className="mt-4 rounded-xl bg-black px-5 py-2 font-bold text-white"
+          >
+            Refresh Real Data
+          </button>
+        </section>
 
-          <p
-            className={`mt-1 text-sm font-semibold ${
-              chatInput.length > MAX_USER_MESSAGE_LENGTH
-                ? "text-red-700"
-                : "text-gray-600"
+        <section className="rounded-2xl bg-white p-5 shadow">
+          <h2 className="mb-4 text-2xl font-bold text-[#7a3b1d]">
+            Happy Office Global Control
+          </h2>
+
+          <p className="mb-3">
+            Status:{" "}
+            <span
+              className={
+                happyOfficeOpen
+                  ? "font-bold text-green-700"
+                  : "font-bold text-red-700"
+              }
+            >
+              {happyOfficeOpen ? "Open" : "Closed"}
+            </span>
+          </p>
+
+          <button
+            onClick={() => setHappyOfficeOpen(!happyOfficeOpen)}
+            className={`rounded-xl px-5 py-2 font-bold text-white ${
+              happyOfficeOpen ? "bg-red-700" : "bg-green-700"
             }`}
           >
-            {chatInput.length}/{MAX_USER_MESSAGE_LENGTH}
+            {happyOfficeOpen ? "Close Happy Office" : "Open Happy Office"}
+          </button>
+        </section>
+
+        <section className="rounded-2xl bg-white p-5 shadow">
+          <h2 className="mb-4 text-2xl font-bold text-[#7a3b1d]">
+            AI Control
+          </h2>
+
+          <div className="grid gap-4 md:grid-cols-3">
+            <div>
+              <label className="mb-1 block text-sm font-bold">
+                Available AI budget ($)
+              </label>
+              <input
+                type="number"
+                value={aiBudget}
+                onChange={(e) => setAiBudget(Number(e.target.value))}
+                className="w-full rounded border p-2"
+              />
+              <p className="mt-1 text-xs text-gray-600">
+                Enter the real AI credit or budget available.
+              </p>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-bold">
+                Total input tokens per reply
+              </label>
+              <input
+                type="number"
+                value={inputTokens}
+                onChange={(e) => setInputTokens(Number(e.target.value))}
+                className="w-full rounded border p-2"
+              />
+              <p className="mt-1 text-xs text-gray-600">
+                Includes Elvy prompt, memory, history, and user message.
+              </p>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-bold">
+                Max output tokens per reply
+              </label>
+              <input
+                type="number"
+                value={outputTokens}
+                onChange={(e) => setOutputTokens(Number(e.target.value))}
+                className="w-full rounded border p-2"
+              />
+              <p className="mt-1 text-xs text-gray-600">
+                Maximum tokens allowed for Elvy reply.
+              </p>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-bold">
+                Input token price ($)
+              </label>
+              <input
+                type="number"
+                step="0.0000001"
+                value={inputTokenPrice}
+                onChange={(e) => setInputTokenPrice(Number(e.target.value))}
+                className="w-full rounded border p-2"
+              />
+              <p className="mt-1 text-xs text-gray-600">
+                Example GPT-4.1 mini: 0.0000004
+              </p>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-bold">
+                Output token price ($)
+              </label>
+              <input
+                type="number"
+                step="0.0000001"
+                value={outputTokenPrice}
+                onChange={(e) => setOutputTokenPrice(Number(e.target.value))}
+                className="w-full rounded border p-2"
+              />
+              <p className="mt-1 text-xs text-gray-600">
+                Example GPT-4.1 mini: 0.0000016
+              </p>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-bold">
+                Talk to Elvy free replies limit
+              </label>
+              <input
+                type="number"
+                value={freeTalkReplies}
+                onChange={(e) => setFreeTalkReplies(Number(e.target.value))}
+                className="w-full rounded border p-2"
+              />
+              <p className="mt-1 text-xs text-gray-600">
+                Free replies reserved for Talk to Elvy room.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-4">
+            <div className="rounded-xl bg-[#f5e6d3] p-4">
+              <p className="text-sm">Input cost / reply</p>
+              <p className="text-xl font-bold">${inputCostPerReply.toFixed(6)}</p>
+            </div>
+
+            <div className="rounded-xl bg-[#f5e6d3] p-4">
+              <p className="text-sm">Output cost / reply</p>
+              <p className="text-xl font-bold">${outputCostPerReply.toFixed(6)}</p>
+            </div>
+
+            <div className="rounded-xl bg-[#f5e6d3] p-4">
+              <p className="text-sm">Max cost / reply</p>
+              <p className="text-xl font-bold">${pricePerReply.toFixed(6)}</p>
+            </div>
+
+            <div className="rounded-xl bg-[#f5e6d3] p-4">
+              <p className="text-sm">Replies from $1</p>
+              <p className="text-xl font-bold">
+                {pricePerReply > 0 ? Math.floor(1 / pricePerReply) : 0}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4 rounded-xl bg-[#f5e6d3] p-4">
+            <p>
+              AI Status:{" "}
+              <span className={aiActive ? "font-bold text-green-700" : "font-bold text-red-700"}>
+                {aiActive ? "Active" : "Inactive"}
+              </span>
+            </p>
+            <p>Total possible replies from budget: {totalPossibleAIReplies}</p>
+            <p>Replies per ticket: {repliesPerTicket}</p>
+            <p>Estimated AI cost per ticket: ${costPerTicket.toFixed(4)}</p>
+            <p>Total tickets available from AI budget: {totalTicketsAvailable}</p>
+            <p>Tickets sold: {ticketsSold}</p>
+            <p>
+              Tickets remaining:{" "}
+              <span className={ticketsRemaining > 0 ? "font-bold text-green-700" : "font-bold text-red-700"}>
+                {ticketsRemaining}
+              </span>
+            </p>
+            <p>
+              Ticket generation status:{" "}
+              <span className={ticketGenerationOpen ? "font-bold text-green-700" : "font-bold text-red-700"}>
+                {ticketGenerationOpen ? "Open" : "Closed"}
+              </span>
+            </p>
+          </div>
+
+          <label className="mt-4 flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={confirmAI}
+              onChange={(e) => setConfirmAI(e.target.checked)}
+            />
+            I confirm that I want to change AI activation.
+          </label>
+
+          <button
+            onClick={toggleAI}
+            className={`mt-3 rounded-xl px-5 py-2 font-bold text-white ${
+              aiActive ? "bg-red-700" : "bg-green-700"
+            }`}
+          >
+            {aiActive ? "Deactivate AI" : "Activate AI"}
+          </button>
+        </section>
+
+        <section className="rounded-2xl bg-white p-5 shadow">
+          <h2 className="mb-4 text-2xl font-bold text-[#7a3b1d]">
+            Business Monitor from Real Data
+          </h2>
+
+          <div className="grid gap-4 md:grid-cols-4">
+            <div>
+              <label className="mb-1 block text-sm font-bold">Ticket price ($)</label>
+              <input
+                type="number"
+                value={ticketPrice}
+                onChange={(e) => setTicketPrice(Number(e.target.value))}
+                className="w-full rounded border p-2"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-bold">Replies per ticket</label>
+              <input
+                type="number"
+                value={repliesPerTicket}
+                onChange={(e) => setRepliesPerTicket(clampNumber(Number(e.target.value), 1, MAX_REPLIES_PER_USER))}
+                className="w-full rounded border p-2"
+              />
+            </div>
+
+            <div className="rounded-xl bg-[#f5e6d3] p-3">
+              <p className="text-sm">AI cost per ticket</p>
+              <p className="text-xl font-bold">${costPerTicket.toFixed(4)}</p>
+            </div>
+
+            <div className="rounded-xl bg-[#f5e6d3] p-3">
+              <p className="text-sm">Profit per ticket</p>
+              <p className="text-xl font-bold">
+                ${(ticketPrice - costPerTicket).toFixed(2)}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-4">
+            <div className="rounded-xl bg-[#f5e6d3] p-3">
+              Tickets available: {totalTicketsAvailable}
+            </div>
+
+            <div className="rounded-xl bg-[#f5e6d3] p-3">
+              Tickets sold: {ticketsSold}
+            </div>
+
+            <div
+              className={`rounded-xl p-3 ${
+                ticketsRemaining > 0 ? "bg-green-50" : "bg-red-50"
+              }`}
+            >
+              Tickets remaining: {ticketsRemaining}
+            </div>
+
+            <div
+              className={`rounded-xl p-3 ${
+                ticketGenerationOpen ? "bg-green-50" : "bg-red-50"
+              }`}
+            >
+              Code generation: {ticketGenerationOpen ? "Open" : "Closed"}
+            </div>
+
+            <div className="rounded-xl bg-[#f5e6d3] p-3">
+              Total possible replies: {totalPossibleAIReplies}
+            </div>
+
+            <div className="rounded-xl bg-[#f5e6d3] p-3">
+              Replies reserved by sold tickets: {ticketsSold * repliesPerTicket}
+            </div>
+
+            <div className="rounded-xl bg-[#f5e6d3] p-3">
+              Gross: ${grossIncome.toFixed(2)}
+            </div>
+
+            <div className="rounded-xl bg-[#f5e6d3] p-3">
+              Net profit: ${netProfit.toFixed(2)}
+            </div>
+          </div>
+
+          {ticketsRemaining <= 0 && (
+            <div className="mt-4 rounded-xl bg-red-50 p-4 font-semibold text-red-800">
+              No AI tickets are currently available. Add more AI budget to continue generating new codes or tickets.
+            </div>
+          )}
+        </section>
+
+        <section className="rounded-2xl bg-white p-5 shadow">
+          <h2 className="mb-4 text-2xl font-bold text-[#7a3b1d]">
+            Payment Activity
+          </h2>
+
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[900px] border-collapse text-left text-sm">
+              <thead>
+                <tr className="bg-[#f5e6d3] text-[#3b2114]">
+                  <th className="border p-3">User Code</th>
+                  <th className="border p-3">Name</th>
+                  <th className="border p-3">Payment Status</th>
+                  <th className="border p-3">Method</th>
+                  <th className="border p-3">Paid At</th>
+                  <th className="border p-3">Replies Left</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dailyUsers.length === 0 && (
+                  <tr>
+                    <td className="border p-3" colSpan={6}>
+                      No payment activity yet.
+                    </td>
+                  </tr>
+                )}
+
+                {dailyUsers.map((user) => {
+                  const left = Math.max(
+                    Number(user.repliesLimit || 0) - Number(user.repliesUsed || 0),
+                    0
+                  );
+
+                  return (
+                    <tr key={`payment-${user.code}`}>
+                      <td className="border p-3 font-bold text-[#7a3b1d]">
+                        {user.code}
+                      </td>
+                      <td className="border p-3">{user.name}</td>
+                      <td className="border p-3">
+                        <span
+                          className={
+                            user.paymentStatus === "Paid"
+                              ? "font-bold text-green-700"
+                              : user.paymentStatus === "Pending"
+                                ? "font-bold text-yellow-700"
+                                : user.paymentStatus === "Failed"
+                                  ? "font-bold text-red-700"
+                                  : "font-bold text-gray-700"
+                          }
+                        >
+                          {user.paymentStatus || "Unpaid"}
+                        </span>
+                      </td>
+                      <td className="border p-3">{user.paymentMethod || "—"}</td>
+                      <td className="border p-3">
+                        {user.paidAt
+                          ? new Date(user.paidAt).toLocaleString()
+                          : "—"}
+                      </td>
+                      <td className="border p-3">{left}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="rounded-2xl bg-white p-5 shadow">
+          <h2 className="mb-4 text-2xl font-bold text-[#7a3b1d]">
+            Payment Control
+          </h2>
+
+          <p className="mb-3">
+            Automatic Payment:{" "}
+            <span
+              className={
+                paymentOpen
+                  ? "font-bold text-green-700"
+                  : "font-bold text-red-700"
+              }
+            >
+              {paymentOpen ? "Open" : "Closed"}
+            </span>
           </p>
 
           <button
-            onClick={sendUserChatMessage}
-            className="mt-3 rounded-xl bg-[#7a3b1d] px-6 py-3 font-bold text-white"
+            onClick={toggleAutomaticPayment}
+            className={`mb-6 rounded-xl px-5 py-2 font-bold text-white ${
+              paymentOpen ? "bg-red-700" : "bg-green-700"
+            }`}
           >
-            Send
+            {paymentOpen ? "Close Automatic Payment" : "Open Automatic Payment"}
           </button>
-        </div>
-      )}
 
-      {dashboardOpen && isAdmin && (
-        <section className="absolute left-[4%] top-[12%] z-30 h-[84%] w-[92%] overflow-hidden rounded-3xl bg-white/95 p-8 shadow-2xl">
-          <div className="h-full overflow-y-auto">
-            <h1 className="text-4xl font-bold text-[#7a3b1d]">
-              Daily Support Dashboard
-            </h1>
+          <h3 className="mb-3 text-xl font-bold text-[#7a3b1d]">
+            Payment Settings
+          </h3>
 
-            <div className="mt-6 grid grid-cols-6 gap-4">
-              <div className="rounded-xl bg-white p-4 shadow">
-                <p>Room</p>
-                <p className="text-2xl font-bold">
-                  {roomOpen ? "Open" : "Closed"}
-                </p>
-                <button
-                  onClick={() => setRoomOpen(!roomOpen)}
-                  className="mt-3 rounded bg-[#7a3b1d] px-4 py-2 text-white"
-                >
-                  {roomOpen ? "Close Room" : "Open Room"}
-                </button>
-              </div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="rounded-xl border p-4">
+              <label className="mb-3 flex items-center gap-2 font-bold">
+                <input
+                  type="checkbox"
+                  checked={paypalActive}
+                  onChange={(e) => setPaypalActive(e.target.checked)}
+                />
+                Activate PayPal
+              </label>
 
-              <div className="rounded-xl bg-white p-4 shadow">
-                <p>Code Generation</p>
-                <p className="text-2xl font-bold">
-                  {codeGenerationOpen ? "Open" : "Closed"}
-                </p>
-                <button
-                  onClick={() => setCodeGenerationOpen(!codeGenerationOpen)}
-                  className="mt-3 rounded bg-black px-4 py-2 text-white"
-                >
-                  {codeGenerationOpen ? "Close Codes" : "Open Codes"}
-                </button>
-              </div>
-
-              <div className="rounded-xl bg-white p-4 shadow">
-                <p>Telegram</p>
-                <p className="text-2xl font-bold">Sync Users</p>
-                <button
-                  onClick={syncTelegramUsers}
-                  className="mt-3 rounded bg-blue-700 px-4 py-2 text-white"
-                >
-                  Sync Telegram Users
-                </button>
-              </div>
-
-              <div className="rounded-xl bg-white p-4 shadow">
-                <p>Total Users</p>
-                <p className="text-3xl font-bold">{users.length}</p>
-              </div>
-
-              <div className="rounded-xl bg-yellow-50 p-4 shadow">
-                <p>Waiting</p>
-                <p className="text-3xl font-bold">{waitingUsers}</p>
-              </div>
-
-              <div className="rounded-xl bg-green-50 p-4 shadow">
-                <p>Active Users</p>
-                <p className="text-3xl font-bold">{activeUsers}</p>
-              </div>
+              <label className="mb-1 block text-sm font-bold">
+                PayPal payment link
+              </label>
+              <input
+                type="text"
+                value={paypalLink}
+                onChange={(e) => setPaypalLink(e.target.value)}
+                placeholder="Enter PayPal payment link"
+                className="w-full rounded border p-2"
+              />
             </div>
 
-            <div className="mt-8 overflow-x-auto rounded-2xl bg-white p-5 shadow">
-                <h2 className="text-2xl font-bold text-[#7a3b1d]">
-                 User Requests
-              </h2>
+            <div className="rounded-xl border p-4">
+              <label className="mb-3 flex items-center gap-2 font-bold">
+                <input
+                  type="checkbox"
+                  checked={skrillActive}
+                  onChange={(e) => setSkrillActive(e.target.checked)}
+                />
+                Activate Skrill
+              </label>
 
-              <table className="mt-4 w-full min-w-[1500px] text-sm">
-                <thead>
-                  <tr className="bg-[#7a3b1d] text-white">
-                    <th className="p-3 text-left">Code</th>
-                    <th className="p-3 text-left">Access No.</th>
-                    <th className="p-3 text-left">Name</th>
-                    <th className="p-3 text-left">Age</th>
-                    <th className="p-3 text-left">Help</th>
-                    <th className="p-3 text-left">Contact</th>
-                    <th className="p-3 text-left">Telegram ID</th>
-                    <th className="p-3 text-left">Status</th>
-                    <th className="p-3 text-left">Replies</th>
-                    <th className="p-3 text-left">Controls</th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {users.map((u) => (
-                    <Fragment key={u.code}>
-                      <tr className={`border-b ${rowColor(u.status)}`}>
-                        <td className="p-3 font-bold">{u.code}</td>
-                        <td className="p-3 font-bold">
-                          {u.setupAccessNumber || "Not sent"}
-                        </td>
-                        <td className="p-3">{u.name}</td>
-                        <td className="p-3">{u.ageGroup}</td>
-                        <td className="p-3">{u.helpType}</td>
-                        <td className="p-3">
-                          {u.contactMethod}: {u.contactValue}
-                        </td>
-                        <td className="p-3">
-                          {u.telegramChatId ? (
-                            <span className="rounded bg-green-100 px-2 py-1 font-bold text-green-800">
-                              Synced
-                            </span>
-                          ) : u.contactMethod === "Telegram" ? (
-                            <span className="rounded bg-red-100 px-2 py-1 font-bold text-red-800">
-                              Not synced
-                            </span>
-                          ) : (
-                            <span className="text-gray-500">—</span>
-                          )}
-                        </td>
-                        <td className="p-3">
-                          {u.status === "In Chat" ? (
-                            <button
-                              onClick={() => toggleAdminChat(u.code)}
-                              className={`rounded-full border px-3 py-1 font-bold ${
-                                u.needsAdminReply
-                                  ? "bg-red-100 text-red-800 border-red-600"
-                                  : "bg-yellow-100 text-yellow-800 border-yellow-500"
-                              }`}
-                            >
-                              In Chat
-                            </button>
-                          ) : (
-                            <span
-                              className={`rounded-full border px-3 py-1 font-bold ${statusBadge(
-                                u.status
-                              )}`}
-                            >
-                              {u.status}
-                            </span>
-                          )}
-                        </td>
-                        <td className="p-3">
-                          <input
-                            type="number"
-                            value={u.repliesLimit}
-                            onChange={(e) =>
-                              updateUser(u.code, {
-                                repliesLimit: Number(e.target.value),
-                              })
-                            }
-                            className="w-24 rounded border px-2 py-1"
-                          />
-                          <span className="ml-2">used {u.repliesUsed}</span>
-                        </td>
-                        <td className="space-x-2 p-3">
-                          <button
-                            onClick={() => sendSetupMessage(u.code)}
-                            className="rounded bg-blue-700 px-3 py-1 text-white"
-                          >
-                            Send Access
-                          </button>
-
-                          <button
-                            onClick={() => activateElvy(u.code)}
-                            className="rounded bg-green-700 px-3 py-1 text-white"
-                          >
-                            Activate Elvy
-                          </button>
-
-                          <button
-                            onClick={() =>
-                              updateUser(u.code, { status: "Suspended" })
-                            }
-                            className="rounded bg-yellow-600 px-3 py-1 text-white"
-                          >
-                            Suspend
-                          </button>
-
-                          <button
-                            onClick={() =>
-                              updateUser(u.code, { status: "Blocked" })
-                            }
-                            className="rounded bg-red-700 px-3 py-1 text-white"
-                          >
-                            Block
-                          </button>
-
-                          <button
-                            disabled={!canDeleteUser(u)}
-                            onClick={() => deleteUser(u.code)}
-                            className={`rounded px-3 py-1 text-white ${
-                              canDeleteUser(u)
-                                ? "bg-black"
-                                : "cursor-not-allowed bg-gray-400"
-                            }`}
-                          >
-                            Delete
-                          </button>
-                        </td>
-                      </tr>
-
-                      {openAdminChats.includes(u.code) && (
-                        <tr>
-                          <td colSpan={10} className="bg-[#f7efe6] p-4">
-                            <div className="rounded-2xl border bg-white p-5 shadow">
-                              <div className="flex items-start justify-between gap-4">
-                                <div>
-                                  <h3 className="text-xl font-bold text-[#7a3b1d]">
-                                    Chat with {u.name}
-                                  </h3>
-                                  <p className="text-sm font-semibold text-[#4b2a12]">
-                                    Help selected: {u.helpType}
-                                  </p>
-                                  <p className="text-sm font-semibold text-[#4b2a12]">
-                                    Memory: {getMemorySummary(u.memory)}
-                                  </p>
-                                  <p className="text-sm font-semibold text-[#4b2a12]">
-                                    Code: {u.code}
-                                  </p>
-                                </div>
-
-                                <button
-                                  onClick={() => toggleAdminChat(u.code)}
-                                  className="rounded bg-black px-3 py-1 text-sm text-white"
-                                >
-                                  Hide Chat
-                                </button>
-                              </div>
-
-                              <div className="mt-4 max-h-[260px] overflow-y-auto rounded-xl border bg-[#faf7f2] p-4">
-                                {u.adminMessages.map((m, i) => (
-                                  <div
-                                    key={`admin-${u.code}-${i}`}
-                                    className="mb-3 whitespace-pre-line rounded-xl bg-[#7a3b1d] p-3 text-white"
-                                  >
-                                    Happy Office: {m}
-                                  </div>
-                                ))}
-
-                                {u.userMessages.map((m, i) => (
-                                  <div
-                                    key={`user-${u.code}-${i}`}
-                                    className="mb-3 rounded-xl bg-white p-3 shadow"
-                                  >
-                                    User: {m}
-                                  </div>
-                                ))}
-                              </div>
-
-                              <textarea
-                                value={adminReplyInputs[u.code] || ""}
-                                onChange={(e) =>
-                                  setAdminReplyInputs((prev) => ({
-                                    ...prev,
-                                    [u.code]: e.target.value,
-                                  }))
-                                }
-                                placeholder="Write admin reply..."
-                                className="mt-4 h-24 w-full rounded-xl border px-4 py-3"
-                              />
-
-                              <button
-                                onClick={() => sendAdminReply(u.code)}
-                                className="mt-3 rounded-xl bg-[#7a3b1d] px-6 py-3 font-bold text-white"
-                              >
-                                Send Reply
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      )}
-                    </Fragment>
-                  ))}
-
-                  {users.length === 0 && (
-                    <tr>
-                      <td colSpan={10} className="p-6 text-center">
-                        No user requests yet.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+              <label className="mb-1 block text-sm font-bold">
+                Skrill payment link
+              </label>
+              <input
+                type="text"
+                value={skrillLink}
+                onChange={(e) => setSkrillLink(e.target.value)}
+                placeholder="Enter Skrill payment link"
+                className="w-full rounded border p-2"
+              />
             </div>
+          </div>
 
-            <p className="mt-4 text-lg font-semibold">
-              AI Replies Used: {totalReplies}
-            </p>
+          <button
+            onClick={savePaymentSettings}
+            className="mt-4 rounded-xl bg-[#7a3b1d] px-5 py-2 font-bold text-white"
+          >
+            Save Payment Settings
+          </button>
+        </section>
+
+        <section className="rounded-2xl bg-white p-5 shadow">
+          <h2 className="mb-4 text-2xl font-bold text-[#7a3b1d]">
+            Admin Management
+          </h2>
+
+          <div className="grid gap-4 md:grid-cols-3">
+            {admins.map((admin) => (
+              <div key={admin.username} className="rounded-xl border p-4">
+                <h3 className="font-bold">{admin.label}</h3>
+                <p className="text-sm">Username: {admin.username}</p>
+                <p className="text-sm">Room: {admin.room}</p>
+                <p className="text-sm">
+                  Status:{" "}
+                  <span className={admin.blocked ? "font-bold text-red-700" : "font-bold text-green-700"}>
+                    {admin.blocked ? "Blocked" : "Active"}
+                  </span>
+                </p>
+
+                <button
+                  onClick={() => resetAdminPassword(admin.username)}
+                  className="mt-3 mr-2 rounded bg-blue-700 px-3 py-2 text-sm text-white"
+                >
+                  Reset Password
+                </button>
+
+                <button
+                  onClick={() => toggleAdminBlock(admin.username)}
+                  className={`mt-3 rounded px-3 py-2 text-sm text-white ${
+                    admin.blocked ? "bg-green-700" : "bg-red-700"
+                  }`}
+                >
+                  {admin.blocked ? "Unblock" : "Block"}
+                </button>
+              </div>
+            ))}
           </div>
         </section>
-      )}
+
+        <section className="rounded-2xl bg-white p-5 shadow">
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="text-2xl font-bold text-[#7a3b1d]">
+              Real Active Users
+            </h2>
+
+            <button
+              onClick={() => setShowUsers(!showUsers)}
+              className="rounded-xl bg-black px-4 py-2 text-white"
+            >
+              {showUsers ? "Hide Users" : "Show Users"}
+            </button>
+          </div>
+
+          {showUsers && (
+            <div className="space-y-3">
+              {dailyUsers.length === 0 && (
+                <p className="rounded-xl bg-[#f5e6d3] p-4">
+                  No real Daily Support users yet.
+                </p>
+              )}
+
+              {dailyUsers.map((user) => {
+                const left = Math.max(Number(user.repliesLimit || 0) - Number(user.repliesUsed || 0), 0);
+
+                return (
+                  <div
+                    key={user.code}
+                    className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4"
+                  >
+                    <button
+                      onClick={() => setSelectedUserCode(user.code)}
+                      className="font-bold text-[#7a3b1d] underline"
+                    >
+                      {user.code}
+                    </button>
+
+                    <span>{user.name}</span>
+                    <span>{user.helpType || "Daily Support"}</span>
+                    <span>Limit: {user.repliesLimit}</span>
+                    <span>Used: {user.repliesUsed}</span>
+                    <span>Left: {left}</span>
+                    <span>Status: {user.status}</span>
+
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={() => setUserReplies(user.code)}
+                        className="rounded bg-blue-700 px-3 py-2 text-sm font-bold text-white"
+                      >
+                        Set Replies
+                      </button>
+
+                      <button
+                        onClick={() => resetUserUsedReplies(user.code)}
+                        className="rounded bg-yellow-600 px-3 py-2 text-sm font-bold text-white"
+                      >
+                        Reset Used
+                      </button>
+
+                      <button
+                        onClick={() => activateUser(user.code)}
+                        className="rounded bg-green-700 px-3 py-2 text-sm font-bold text-white"
+                      >
+                        Activate
+                      </button>
+
+                      <button
+                        onClick={() => suspendUser(user.code)}
+                        className="rounded bg-orange-700 px-3 py-2 text-sm font-bold text-white"
+                      >
+                        Suspend
+                      </button>
+
+                      <button
+                        onClick={() => blockUser(user.code)}
+                        className="rounded bg-red-700 px-3 py-2 text-sm font-bold text-white"
+                      >
+                        Block
+                      </button>
+
+                      <button
+                        onClick={() => deleteUser(user.code)}
+                        className="rounded bg-black px-3 py-2 text-sm font-bold text-white"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+
+              <div className="rounded-xl bg-[#f5e6d3] p-4">
+                <p className="mb-2 font-bold">
+                  Send message as Happy Office Director
+                </p>
+
+                <p className="mb-2 text-sm">
+                  Selected user:{" "}
+                  {selectedUserCode
+                    ? `${dailyUsers.find((user) => user.code === selectedUserCode)?.name || "User"} (${selectedUserCode})`
+                    : "None"}
+                </p>
+
+                <textarea
+                  value={directorMessage}
+                  onChange={(e) => setDirectorMessage(e.target.value)}
+                  placeholder="Write a direct message to the selected user..."
+                  className="mb-3 h-28 w-full rounded border p-3"
+                />
+
+                <button
+                  onClick={sendDirectorMessage}
+                  className="rounded-xl bg-[#7a3b1d] px-5 py-2 font-bold text-white"
+                >
+                  Send Message
+                </button>
+              </div>
+            </div>
+          )}
+        </section>
+
+        <button
+          onClick={saveAll}
+          className="w-full rounded-2xl bg-green-700 p-4 text-xl font-bold text-white"
+        >
+          Save Founder Settings
+        </button>
+      </div>
     </main>
   );
 }
