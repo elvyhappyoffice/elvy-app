@@ -44,6 +44,8 @@ const DAILY_USERS_KEY = "dailySupportUsers";
 const TALK_TOTAL_FREE_USED_KEY = "talk_to_elvy_total_free_used";
 const TALK_SETTINGS_KEY = "talk_to_elvy_settings";
 
+const MAX_REPLIES_PER_USER = 800;
+
 const DEFAULT_ADMINS: AdminControl[] = [
   {
     username: "daily_admin",
@@ -77,6 +79,26 @@ function safeParse<T>(value: string | null, fallback: T): T {
   }
 }
 
+function clampNumber(value: number, min: number, max: number) {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(Math.max(Math.floor(value), min), max);
+}
+
+function normalizeDailyUser(user: DailySupportUser): DailySupportUser {
+  const repliesLimit = clampNumber(Number(user.repliesLimit || 0), 0, MAX_REPLIES_PER_USER);
+  const repliesUsed = clampNumber(Number(user.repliesUsed || 0), 0, repliesLimit);
+
+  return {
+    ...user,
+    repliesLimit,
+    repliesUsed,
+    paymentStatus: user.paymentStatus || "Unpaid",
+    adminMessages: Array.isArray(user.adminMessages) ? user.adminMessages : [],
+    userMessages: Array.isArray(user.userMessages) ? user.userMessages : [],
+  };
+}
+
+
 export default function FounderDashboardPage() {
   const [happyOfficeOpen, setHappyOfficeOpen] = useState(true);
 
@@ -90,7 +112,7 @@ export default function FounderDashboardPage() {
   const [freeTalkReplies, setFreeTalkReplies] = useState(100);
 
   const [ticketPrice, setTicketPrice] = useState(4);
-  const [repliesPerTicket, setRepliesPerTicket] = useState(500);
+  const [repliesPerTicket: clampNumber(Number(repliesPerTicket || 0), 1, MAX_REPLIES_PER_USER), setRepliesPerTicket] = useState(500);
 
   const [admins, setAdmins] = useState<AdminControl[]>(DEFAULT_ADMINS);
   const [dailyUsers, setDailyUsers] = useState<DailySupportUser[]>([]);
@@ -118,7 +140,7 @@ export default function FounderDashboardPage() {
       const data = await res.json();
 
       if (Array.isArray(data?.users)) {
-        setDailyUsers(data.users);
+        setDailyUsers(data.users.map(normalizeDailyUser));
       }
     } catch (error) {
       console.error("Could not load Daily Support users from server:", error);
@@ -182,7 +204,7 @@ fetch("/api/payment-settings")
       setOutputTokenPrice(savedAI.outputTokenPrice ?? 0.0000016);
       setFreeTalkReplies(savedAI.freeTalkReplies ?? 100);
       setTicketPrice(savedAI.ticketPrice ?? 4);
-      setRepliesPerTicket(savedAI.repliesPerTicket ?? 500);
+      setRepliesPerTicket(clampNumber(Number(savedAI.repliesPerTicket ?? 500), 1, MAX_REPLIES_PER_USER));
     }
 
     setAdmins(savedAdmins);
@@ -381,6 +403,135 @@ async function savePaymentSettings() {
       console.error("Director message failed:", error);
       alert("Message failed. Check the console or server logs.");
     }
+  }
+
+
+  async function saveDailyUsersToServer(updatedUsers: DailySupportUser[], successMessage?: string) {
+    const cleanedUsers = updatedUsers.map(normalizeDailyUser);
+
+    try {
+      const res = await fetch("/api/daily-support-users", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ users: cleanedUsers }),
+      });
+
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok || data?.success === false) {
+        alert("Could not save the user changes. Check /api/daily-support-users.");
+        return;
+      }
+
+      setDailyUsers(Array.isArray(data?.users) ? data.users.map(normalizeDailyUser) : cleanedUsers);
+
+      if (successMessage) {
+        alert(successMessage);
+      }
+    } catch (error) {
+      console.error("Could not save Daily Support users:", error);
+      alert("Could not save the user changes. Check server logs.");
+    }
+  }
+
+  function updateDailyUserLocally(
+    code: string,
+    updater: (user: DailySupportUser) => DailySupportUser
+  ) {
+    return dailyUsers.map((user) => {
+      if (user.code !== code) return normalizeDailyUser(user);
+      return normalizeDailyUser(updater(user));
+    });
+  }
+
+  async function setUserReplies(code: string) {
+    const currentUser = dailyUsers.find((user) => user.code === code);
+    if (!currentUser) return;
+
+    const value = prompt(
+      `Enter total replies for ${currentUser.name}. Maximum is ${MAX_REPLIES_PER_USER}.`,
+      String(currentUser.repliesLimit || repliesPerTicket || 500)
+    );
+
+    if (value === null) return;
+
+    const totalReplies = clampNumber(Number(value), 0, MAX_REPLIES_PER_USER);
+
+    const updatedUsers = updateDailyUserLocally(code, (user) => ({
+      ...user,
+      repliesLimit: totalReplies,
+      repliesUsed: Math.min(Number(user.repliesUsed || 0), totalReplies),
+      paymentNoticeSent: false,
+    } as DailySupportUser));
+
+    await saveDailyUsersToServer(updatedUsers, `Replies set to ${totalReplies}.`);
+  }
+
+  async function resetUserUsedReplies(code: string) {
+    const updatedUsers = updateDailyUserLocally(code, (user) => ({
+      ...user,
+      repliesUsed: 0,
+      paymentNoticeSent: false,
+    } as DailySupportUser));
+
+    await saveDailyUsersToServer(updatedUsers, "Used replies reset to 0.");
+  }
+
+  async function activateUser(code: string) {
+    const updatedUsers = updateDailyUserLocally(code, (user) => {
+      const limit = clampNumber(
+        Number(user.repliesLimit || repliesPerTicket || 500),
+        1,
+        MAX_REPLIES_PER_USER
+      );
+
+      return {
+        ...user,
+        status: "Active",
+        repliesLimit: limit,
+        repliesUsed: Math.min(Number(user.repliesUsed || 0), limit),
+        paymentStatus: "Paid",
+        paid: true,
+        paidAt: user.paidAt || new Date().toISOString(),
+        paymentNoticeSent: false,
+      } as DailySupportUser;
+    });
+
+    await saveDailyUsersToServer(updatedUsers, "User activated.");
+  }
+
+  async function suspendUser(code: string) {
+    const updatedUsers = updateDailyUserLocally(code, (user) => ({
+      ...user,
+      status: "Suspended",
+    } as DailySupportUser));
+
+    await saveDailyUsersToServer(updatedUsers, "User suspended.");
+  }
+
+  async function blockUser(code: string) {
+    const updatedUsers = updateDailyUserLocally(code, (user) => ({
+      ...user,
+      status: "Blocked",
+    } as DailySupportUser));
+
+    await saveDailyUsersToServer(updatedUsers, "User blocked.");
+  }
+
+  async function deleteUser(code: string) {
+    const currentUser = dailyUsers.find((user) => user.code === code);
+    if (!currentUser) return;
+
+    const confirmDelete = confirm(`Delete ${currentUser.name} from Daily Support users?`);
+    if (!confirmDelete) return;
+
+    const updatedUsers = dailyUsers
+      .filter((user) => user.code !== code)
+      .map(normalizeDailyUser);
+
+    await saveDailyUsersToServer(updatedUsers, "User deleted.");
   }
 
   function logout() {
@@ -751,7 +902,7 @@ async function savePaymentSettings() {
               <input
                 type="number"
                 value={repliesPerTicket}
-                onChange={(e) => setRepliesPerTicket(Number(e.target.value))}
+                onChange={(e) => setRepliesPerTicket(clampNumber(Number(e.target.value), 1, MAX_REPLIES_PER_USER))}
                 className="w-full rounded border p-2"
               />
             </div>
@@ -1048,9 +1199,54 @@ async function savePaymentSettings() {
 
                     <span>{user.name}</span>
                     <span>{user.helpType || "Daily Support"}</span>
+                    <span>Limit: {user.repliesLimit}</span>
                     <span>Used: {user.repliesUsed}</span>
                     <span>Left: {left}</span>
                     <span>Status: {user.status}</span>
+
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={() => setUserReplies(user.code)}
+                        className="rounded bg-blue-700 px-3 py-2 text-sm font-bold text-white"
+                      >
+                        Set Replies
+                      </button>
+
+                      <button
+                        onClick={() => resetUserUsedReplies(user.code)}
+                        className="rounded bg-yellow-600 px-3 py-2 text-sm font-bold text-white"
+                      >
+                        Reset Used
+                      </button>
+
+                      <button
+                        onClick={() => activateUser(user.code)}
+                        className="rounded bg-green-700 px-3 py-2 text-sm font-bold text-white"
+                      >
+                        Activate
+                      </button>
+
+                      <button
+                        onClick={() => suspendUser(user.code)}
+                        className="rounded bg-orange-700 px-3 py-2 text-sm font-bold text-white"
+                      >
+                        Suspend
+                      </button>
+
+                      <button
+                        onClick={() => blockUser(user.code)}
+                        className="rounded bg-red-700 px-3 py-2 text-sm font-bold text-white"
+                      >
+                        Block
+                      </button>
+
+                      <button
+                        onClick={() => deleteUser(user.code)}
+                        className="rounded bg-black px-3 py-2 text-sm font-bold text-white"
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </div>
                 );
               })}
