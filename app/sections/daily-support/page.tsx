@@ -49,13 +49,14 @@ type SupportUser = {
   endDate: string;
   adminMessages: string[];
   userMessages: string[];
+  privateAdminMessages?: string[];
+  privateUserMessages?: string[];
   setupAccessNumber?: string;
   telegramChatId?: string;
   needsAdminReply?: boolean;
   memory?: UserMemory;
 };
 
-const USERS_KEY = "dailySupportUsers";
 const ROOM_KEY = "dailySupportRoomOpen";
 const CODE_GEN_KEY = "dailySupportCodeGenerationOpen";
 const MAX_USER_MESSAGE_LENGTH = 300;
@@ -64,7 +65,7 @@ const TELEGRAM_BOT_LINK = "https://t.me/happy_office_support_bot";
 
 async function loadUsersFromServer(): Promise<SupportUser[]> {
   try {
-    const res = await fetch("/api/daily-support-users");
+    const res = await fetch("/api/daily-support-users", { cache: "no-store" });
     const data = await res.json();
     return data.users || [];
   } catch {
@@ -305,10 +306,11 @@ export default function DailySupportPage() {
     setRole(localStorage.getItem("adminRole"));
     setRoom(localStorage.getItem("adminRoom"));
 
-loadUsersFromServer().then((loadedUsers) => {
-  setUsers(loadedUsers);
-  setStorageReady(true);
-});
+    loadUsersFromServer().then((loadedUsers) => {
+      setUsers(loadedUsers);
+      setStorageReady(true);
+    });
+
     const savedRoom = localStorage.getItem(ROOM_KEY);
     if (savedRoom !== null) setRoomOpen(savedRoom === "true");
 
@@ -316,15 +318,13 @@ loadUsersFromServer().then((loadedUsers) => {
     if (savedCodeGen !== null) setCodeGenerationOpen(savedCodeGen === "true");
   }, []);
 
-  // Local real-time refresh: reads saved users every second without
-  // regenerating codes or clearing registered users. This keeps the
-  // admin dashboard updated when the user sends a message.
   useEffect(() => {
     if (!storageReady) return;
-const interval = window.setInterval(async () => {
-  const latestUsers = await loadUsersFromServer();
 
-  setUsers((currentUsers) => {
+    const interval = window.setInterval(async () => {
+      const latestUsers = await loadUsersFromServer();
+
+      setUsers((currentUsers) => {
         const currentString = JSON.stringify(currentUsers);
         const latestString = JSON.stringify(latestUsers);
 
@@ -347,8 +347,7 @@ const interval = window.setInterval(async () => {
     localStorage.setItem(CODE_GEN_KEY, String(codeGenerationOpen));
   }, [codeGenerationOpen]);
 
-  const isAdmin =
-  role === "founder" || (role === "admin" && room === "daily-support");
+  const isAdmin = role === "founder" || (role === "admin" && room === "daily-support");
 
   function generateCode() {
     const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -367,9 +366,7 @@ const interval = window.setInterval(async () => {
 
   function updateUser(code: string, changes: Partial<SupportUser>) {
     setUsers((prev) => {
-      const updated = prev.map((u) =>
-        u.code === code ? { ...u, ...changes } : u
-      );
+      const updated = prev.map((u) => (u.code === code ? { ...u, ...changes } : u));
       saveUsersToServer(updated);
       return updated;
     });
@@ -410,13 +407,10 @@ const interval = window.setInterval(async () => {
           if (user.contactMethod !== "Telegram") return user;
 
           const userContact = user.contactValue.trim().toLowerCase();
-          const normalizedUserContact = userContact.startsWith("@")
-            ? userContact
-            : `@${userContact}`;
+          const normalizedUserContact = userContact.startsWith("@") ? userContact : `@${userContact}`;
 
           const match = data.users.find(
-            (tg: any) =>
-              String(tg.username).trim().toLowerCase() === normalizedUserContact
+            (tg: any) => String(tg.username).trim().toLowerCase() === normalizedUserContact
           );
 
           if (!match) return user;
@@ -439,6 +433,11 @@ const interval = window.setInterval(async () => {
   }
 
   async function createUser() {
+    if (!roomOpen) {
+      window.alert("Daily Support is currently closed. Please try again later.");
+      return;
+    }
+
     if (!codeGenerationOpen) {
       window.alert("Code generation is currently closed. Please try again later.");
       return;
@@ -478,6 +477,8 @@ const interval = window.setInterval(async () => {
       endDate: end.toLocaleDateString(),
       adminMessages: [],
       userMessages: [],
+      privateAdminMessages: [],
+      privateUserMessages: [],
       memory: createEmptyMemory(),
     };
 
@@ -491,10 +492,8 @@ const interval = window.setInterval(async () => {
       `Please open our Telegram bot and press START:\n${TELEGRAM_BOT_LINK}\n\n` +
       `Then return here and wait for your access number.`;
 
-    // Show the old popup immediately, like before.
     window.alert(notice);
 
-    // Save to the server in the background so the popup is not blocked or delayed.
     saveUsersToServer(updatedUsers).catch((error) => {
       console.log("Daily Support save error:", error);
       window.alert("The code was shown, but saving to the server failed. Please check /api/daily-support-users.");
@@ -509,9 +508,7 @@ const interval = window.setInterval(async () => {
     if (!user) return;
 
     if (user.contactMethod === "Telegram" && !user.telegramChatId) {
-      alert(
-        "This Telegram user is not synced yet. Ask the user to start the bot, then click Sync Telegram Users."
-      );
+      alert("This Telegram user is not synced yet. Ask the user to start the bot, then click Sync Telegram Users.");
       return;
     }
 
@@ -550,14 +547,10 @@ const interval = window.setInterval(async () => {
   function openPrivateChat() {
     const entered = activeCode.trim().toUpperCase();
 
-    const user = users.find(
-      (u) => `${u.code}-${u.setupAccessNumber}` === entered
-    );
+    const user = users.find((u) => `${u.code}-${u.setupAccessNumber}` === entered);
 
     if (!user) {
-      alert(
-        "Chat access denied. Please enter the full code and access number sent to you."
-      );
+      alert("Chat access denied. Please enter the full code and access number sent to you.");
       return;
     }
 
@@ -571,8 +564,18 @@ const interval = window.setInterval(async () => {
       return;
     }
 
-    setOpenedUser(user);
-    updateUser(user.code, { status: "In Chat" });
+    const cleanPrivateChatUser = {
+      ...user,
+      privateAdminMessages: user.privateAdminMessages || [],
+      privateUserMessages: user.privateUserMessages || [],
+    };
+
+    setOpenedUser(cleanPrivateChatUser);
+    updateUser(user.code, {
+      status: "In Chat",
+      privateAdminMessages: user.privateAdminMessages || [],
+      privateUserMessages: user.privateUserMessages || [],
+    });
   }
 
   function sendUserChatMessage() {
@@ -583,57 +586,39 @@ const interval = window.setInterval(async () => {
         "That is a lot to carry at once. Let’s take one step together. Please share your message in one short sentence.";
 
       updateUser(openedUser.code, {
-        adminMessages: [...openedUser.adminMessages, gentleLimitMessage],
+        privateAdminMessages: [
+          ...(openedUser.privateAdminMessages || []),
+          gentleLimitMessage,
+        ],
       });
 
       setOpenedUser({
         ...openedUser,
-        adminMessages: [...openedUser.adminMessages, gentleLimitMessage],
+        privateAdminMessages: [
+          ...(openedUser.privateAdminMessages || []),
+          gentleLimitMessage,
+        ],
       });
 
       setChatInput("");
       return;
     }
 
-    const updatedMessages = [...openedUser.userMessages, chatInput];
+    const updatedPrivateUserMessages = [
+      ...(openedUser.privateUserMessages || []),
+      chatInput,
+    ];
 
-    if (openedUser.status === "Active") {
-      const updatedMemory = buildUpdatedMemory(openedUser, chatInput);
-      const elvyReply = getElvyMemoryReply(chatInput, openedUser, updatedMemory);
-      const updatedAdminMessages = [...openedUser.adminMessages, elvyReply];
+    updateUser(openedUser.code, {
+      privateUserMessages: updatedPrivateUserMessages,
+      needsAdminReply: true,
+    });
 
-      updateUser(openedUser.code, {
-        userMessages: updatedMessages,
-        adminMessages: updatedAdminMessages,
-        repliesUsed: openedUser.repliesUsed + 1,
-        needsAdminReply: false,
-        memory: updatedMemory,
-        aiCost: openedUser.aiCost + 0.01,
-      });
-
-      setOpenedUser({
-        ...openedUser,
-        userMessages: updatedMessages,
-        adminMessages: updatedAdminMessages,
-        repliesUsed: openedUser.repliesUsed + 1,
-        needsAdminReply: false,
-        memory: updatedMemory,
-        aiCost: openedUser.aiCost + 0.01,
-      });
-    } else {
-      updateUser(openedUser.code, {
-        userMessages: updatedMessages,
-        repliesUsed: openedUser.repliesUsed + 1,
-        needsAdminReply: true,
-      });
-
-      setOpenedUser({
-        ...openedUser,
-        userMessages: updatedMessages,
-        repliesUsed: openedUser.repliesUsed + 1,
-        needsAdminReply: true,
-      });
-    }
+    setOpenedUser({
+      ...openedUser,
+      privateUserMessages: updatedPrivateUserMessages,
+      needsAdminReply: true,
+    });
 
     setChatInput("");
   }
@@ -707,11 +692,7 @@ const interval = window.setInterval(async () => {
   }
 
   function toggleAdminChat(code: string) {
-    setOpenAdminChats((prev) =>
-      prev.includes(code)
-        ? prev.filter((c) => c !== code)
-        : [...prev, code]
-    );
+    setOpenAdminChats((prev) => (prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code]));
   }
 
   function sendAdminReply(code: string) {
@@ -722,7 +703,7 @@ const interval = window.setInterval(async () => {
     if (!reply) return;
 
     updateUser(code, {
-      adminMessages: [...user.adminMessages, reply],
+      privateAdminMessages: [...(user.privateAdminMessages || []), reply],
       needsAdminReply: false,
     });
 
@@ -740,21 +721,16 @@ const interval = window.setInterval(async () => {
   }
 
   function statusBadge(status: UserStatus) {
-    if (status === "Active")
-      return "bg-green-100 text-green-800 border-green-500";
+    if (status === "Active") return "bg-green-100 text-green-800 border-green-500";
     if (status === "Blocked") return "bg-red-100 text-red-800 border-red-500";
-    if (status === "Suspended")
-      return "bg-gray-100 text-gray-800 border-gray-500";
+    if (status === "Suspended") return "bg-gray-100 text-gray-800 border-gray-500";
     return "bg-yellow-100 text-yellow-800 border-yellow-500";
   }
 
   const activeUsers = users.filter((u) => u.status === "Active").length;
 
   const waitingUsers = users.filter(
-    (u) =>
-      u.status === "Pending" ||
-      u.status === "Setup Sent" ||
-      u.status === "In Chat"
+    (u) => u.status === "Pending" || u.status === "Setup Sent" || u.status === "In Chat"
   ).length;
 
   const totalReplies = users.reduce((s, u) => s + u.repliesUsed, 0);
@@ -764,23 +740,23 @@ const interval = window.setInterval(async () => {
       className="relative min-h-screen bg-cover bg-center text-[#4b2a12]"
       style={{ backgroundImage: "url('/images/daily-support.png')" }}
     >
-{role === "founder" ? (
-  <button
-    onClick={() => {
-      window.location.href = "/founder/dashboard";
-    }}
-    className="absolute left-[2%] top-[4%] z-30 rounded-full bg-black px-6 py-3 text-white"
-  >
-    ← Back to Dashboard
-  </button>
-) : (
-  <Link
-    href="/happy-office"
-    className="absolute left-[2%] top-[4%] z-30 rounded-full bg-black px-6 py-3 text-white"
-  >
-    ← Back to Happy Office
-  </Link>
-)}
+      {role === "founder" ? (
+        <button
+          onClick={() => {
+            window.location.href = "/founder/dashboard";
+          }}
+          className="absolute left-[2%] top-[4%] z-30 rounded-full bg-black px-6 py-3 text-white"
+        >
+          ← Back to Dashboard
+        </button>
+      ) : (
+        <Link
+          href="/happy-office"
+          className="absolute left-[2%] top-[4%] z-30 rounded-full bg-black px-6 py-3 text-white"
+        >
+          ← Back to Happy Office
+        </Link>
+      )}
 
       {isAdmin && (
         <div className="absolute right-[2%] top-[4%] z-40 flex gap-3">
@@ -791,205 +767,227 @@ const interval = window.setInterval(async () => {
             Dashboard
           </button>
 
-          <button
-            onClick={logout}
-            className="rounded-xl bg-black px-5 py-3 font-bold text-white"
-          >
+          <button onClick={logout} className="rounded-xl bg-black px-5 py-3 font-bold text-white">
             Logout
           </button>
         </div>
       )}
 
-{!dashboardOpen && (
-  <section className="absolute left-[10%] top-[12%] z-20 h-[130%] w-[80%] overflow-hidden rounded-3xl bg-white/90 p-6 shadow-x2 backdrop-blur">
-    <div className="grid h-full grid-cols-[1.1fr_0.9fr] gap-5">
-      {/* LEFT SIDE */}
-      <div className="flex h-full flex-col justify-center overflow-hidden rounded-2xl bg-[#fffaf5] p-8 shadow">
-        <h1 className="text-4xl font-bold text-[#7a3b1d]">Daily Support</h1>
-
-        <p className="mt-4 text-lg font-semibold">
-          Welcome to Daily Support Room
-        </p>
-
-        <p className="mt-5 text-base font-semibold text-[#6b4428]">
-          How it works
-        </p>
-
-<p className="mt-2 text-base leading-relaxed text-[#6b4428]">
-  Add your details on the right to receive your access code.
-</p>
-
-<p className="mt-1 text-base leading-relaxed text-[#6b4428]">
-  You can also continue through Telegram:
-</p>
-
-<a
-  href="https://t.me/happy_office_support_bot"
-  target="_blank"
-  rel="noopener noreferrer"
-  className="mt-2 inline-block rounded-lg bg-[#2AABEE] px-4 py-2 text-sm font-bold text-white hover:opacity-90"
->
-  Open Telegram Support
-</a>
-
-<p className="mt-4 text-base leading-relaxed text-[#6b4428]">
-  WhatsApp support will be available soon.
-</p>
-
-<button
-  type="button"
-  disabled
-  className="mt-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-bold text-white opacity-60"
->
-  WhatsApp Coming Soon
-</button>
-      </div>
-
-      {/* RIGHT SIDE */}
-
-      {/* RIGHT SIDE */}
-      <div className="flex h-full flex-col gap-3 overflow-hidden">
-        <div className="rounded-2xl bg-white/95 p-4 shadow">
-          <h2 className="text-2xl font-bold text-[#7a3b1d]">
-            Tell me about you
-          </h2>
-
-          <p className="mt-1 text-sm">
-            Add simple details so Happy Office can prepare your access code.
-          </p>
-
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="What should we call you?"
-            className="mt-3 w-full rounded-xl border border-[#7a3b1d] px-4 py-2"
-          />
-
-          <select
-            value={ageGroup}
-            onChange={(e) => setAgeGroup(e.target.value)}
-            className="mt-2 w-full rounded-xl border border-[#7a3b1d] px-4 py-2"
+      {!dashboardOpen && (
+        <section
+          className="absolute z-20 overflow-hidden rounded-3xl bg-white/90 p-5 shadow-2xl backdrop-blur"
+          style={{
+            left: "4%",
+            top: "4%",
+            width: "92%",
+            height: "120vh",
+          }}
+        >
+          <div
+            className="h-full gap-5"
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              alignItems: "stretch",
+            }}
           >
-            <option>Under 18</option>
-            <option>18–30</option>
-            <option>31–45</option>
-            <option>46+</option>
-          </select>
+            {/* LEFT CARD: Daily Support */}
+            <div className="flex h-full flex-col justify-center overflow-hidden rounded-2xl bg-[#fffaf5] p-8 shadow">
+              <h1 className="text-4xl font-bold text-[#7a3b1d]">Daily Support</h1>
 
-          <select
-            value={contactMethod}
-            onChange={(e) => setContactMethod(e.target.value)}
-            className="mt-2 w-full rounded-xl border border-[#7a3b1d] px-4 py-2"
-          >
-            <option>Telegram</option>
-            <option>WhatsApp</option>
-          </select>
+              <p className="mt-4 text-lg font-semibold">Welcome to Daily Support Room</p>
 
-          <input
-            value={contactValue}
-            onChange={(e) => setContactValue(e.target.value)}
-            placeholder="Telegram username, example: @username"
-            className="mt-2 w-full rounded-xl border border-[#7a3b1d] px-4 py-2"
-          />
+              <p className="mt-5 text-base font-semibold text-[#6b4428]">How it works</p>
 
-          <button
-            onClick={createUser}
-            className="mt-3 w-full rounded-xl bg-[#7a3b1d] px-6 py-3 font-bold text-white"
-          >
-            Generate My Access Code
-          </button>
-        </div>
+              <p className="mt-2 text-base leading-relaxed text-[#6b4428]">
+                Add your details on the right to receive your access code.
+              </p>
 
-        <div className="rounded-2xl bg-[#f7efe6] p-4 shadow">
-          <h2 className="text-xl font-bold text-[#7a3b1d]">
-            To contact Happy Office team, please enter your access code.
-          </h2>
+              <p className="mt-2 text-base leading-relaxed text-[#6b4428]">
+                You can also continue through Telegram:
+              </p>
 
-          <p className="mt-1 text-sm">
-            If you already have your access code and number, enter them here.
-            If not, generate your access code first. Happy Office team will then send your access number.
-          </p>
+<div className="mt-3">
+  <a
+    href={TELEGRAM_BOT_LINK}
+    target="_blank"
+    rel="noopener noreferrer"
+    style={{
+      display: "block",
+      width: "100%",
+      backgroundColor: "#229ED9",
+      color: "white",
+      textAlign: "center",
+      padding: "14px",
+      borderRadius: "12px",
+      fontWeight: "bold",
+      fontSize: "16px",
+      textDecoration: "none",
+    }}
+  >
+    Telegram Support
+  </a>
+</div>
 
-          <input
-            value={activeCode}
-            onChange={(e) => setActiveCode(e.target.value)}
-            placeholder="Example: ELVY-7K2P9-4821"
-            className="mt-3 w-full rounded-xl border border-[#7a3b1d] px-4 py-2"
-          />
+              <p className="mt-6 text-base leading-relaxed text-[#6b4428]">
+                WhatsApp support will be available soon.
+              </p>
 
-          <button
-            onClick={openPrivateChat}
-            className="mt-3 w-full rounded-xl bg-black px-6 py-3 font-bold text-white"
-          >
-            Continue
-          </button>
+              <button
+                type="button"
+                disabled
+                className="mt-2 w-full rounded-lg bg-green-600 px-4 py-3 text-sm font-bold text-white opacity-60"
+              >
+                WhatsApp Coming Soon
+              </button>
+            </div>
 
-          <p className="mt-2 text-sm">
-            Your code is personal. Please do not share it with others.
-          </p>
-        </div>
-      </div>
-    </div>
-  </section>
-)}
+            {/* RIGHT CARD: User Form + Access Code */}
+            <div className="flex h-full flex-col gap-4 overflow-hidden">
+              <div className="rounded-2xl bg-white/95 p-5 shadow">
+                <h2 className="text-2xl font-bold text-[#7a3b1d]">Tell me about you</h2>
+
+                <p className="mt-1 text-sm">
+                  Add simple details so Happy Office can prepare your access code.
+                </p>
+
+                <input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="What should we call you?"
+                  className="mt-3 w-full rounded-xl border border-[#7a3b1d] px-4 py-2"
+                />
+
+                <select
+                  value={ageGroup}
+                  onChange={(e) => setAgeGroup(e.target.value)}
+                  className="mt-2 w-full rounded-xl border border-[#7a3b1d] px-4 py-2"
+                >
+                  <option>Under 18</option>
+                  <option>18–30</option>
+                  <option>31–45</option>
+                  <option>46+</option>
+                </select>
+
+                <select
+                  value={contactMethod}
+                  onChange={(e) => setContactMethod(e.target.value)}
+                  className="mt-2 w-full rounded-xl border border-[#7a3b1d] px-4 py-2"
+                >
+                  <option>Telegram</option>
+                  <option>WhatsApp</option>
+                </select>
+
+                <input
+                  value={contactValue}
+                  onChange={(e) => setContactValue(e.target.value)}
+                  placeholder={contactMethod === "Telegram" ? "Telegram username, example: @username" : "WhatsApp number"}
+                  className="mt-2 w-full rounded-xl border border-[#7a3b1d] px-4 py-2"
+                />
+
+                <button
+                  onClick={createUser}
+                  className="mt-3 w-full rounded-xl bg-[#7a3b1d] px-6 py-3 font-bold text-white"
+                >
+                  Generate My Access Code
+                </button>
+              </div>
+
+              <div className="flex-1 rounded-2xl bg-[#f7efe6] p-5 shadow">
+                <h2 className="text-xl font-bold text-[#7a3b1d]">
+                  To contact Happy Office team, please enter your access code.
+                </h2>
+
+                <p className="mt-1 text-sm">
+                  If you already have your access code and number, enter them here. If not, generate your access code
+                  first. Happy Office team will then send your access number.
+                </p>
+
+                <input
+                  value={activeCode}
+                  onChange={(e) => setActiveCode(e.target.value)}
+                  placeholder="Example: ELVY-7K2P9-4821"
+                  className="mt-3 w-full rounded-xl border border-[#7a3b1d] px-4 py-2"
+                />
+
+                <button
+                  onClick={openPrivateChat}
+                  className="mt-3 w-full rounded-xl bg-black px-6 py-3 font-bold text-white"
+                >
+                  Continue
+                </button>
+
+                <p className="mt-2 text-sm">Your code is personal. Please do not share it with others.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+
       {openedUser && !dashboardOpen && (
-        <div className="fixed right-6 top-[18%] z-50 h-[70%] w-[360px] rounded-2xl bg-white p-5 shadow-2xl">
-          <h2 className="text-xl font-bold text-[#7a3b1d]">
-            Private Chat with Happy Office
-          </h2>
+        <div className="fixed right-6 top-[16%] z-50 h-[74%] w-[720px] rounded-2xl bg-white p-5 shadow-2xl">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-xl font-bold text-[#7a3b1d]">Private Chat with Happy Office</h2>
+              <p className="text-sm font-semibold text-[#4b2a12]">Code: {openedUser.code}</p>
+            </div>
 
-          <p className="text-sm font-semibold text-[#4b2a12]">
-            Code: {openedUser.code}
-          </p>
+            <button
+              onClick={() => setOpenedUser(null)}
+              className="rounded-full bg-black px-4 py-2 text-sm font-bold text-white"
+              title="Close chat"
+            >
+              Close
+            </button>
+          </div>
 
-          {openedUser.status === "Active" && (
-            <p className="text-sm font-semibold text-green-700">
-              Elvy memory is active: {getMemorySummary(openedUser.memory)}
-            </p>
-          )}
+          <div className="mt-4 grid h-[52%] grid-cols-2 gap-4">
+            <div className="h-full overflow-y-auto rounded-xl border bg-white p-4">
+              <p className="mb-3 text-sm font-bold text-[#7a3b1d]">Your messages</p>
 
-          <div className="mt-4 h-[56%] overflow-y-auto rounded-xl border bg-[#faf7f2] p-4">
-            {openedUser.adminMessages.map((m, i) => (
-              <div
-                key={`a-${i}`}
-                className="mb-3 whitespace-pre-line rounded-xl bg-[#7a3b1d] p-3 text-white"
-              >
-                Happy Office: {m}
-              </div>
-            ))}
+              {(openedUser.privateUserMessages || []).length === 0 ? (
+                <div className="rounded-xl bg-[#f7efe6] p-3 text-sm">
+                  Please write your message here to contact the team.
+                </div>
+              ) : (
+                (openedUser.privateUserMessages || []).map((m, i) => (
+                  <div key={`private-user-${i}`} className="mb-3 rounded-xl bg-[#f7efe6] p-3 shadow">
+                    {m}
+                  </div>
+                ))
+              )}
+            </div>
 
-            {openedUser.userMessages.map((m, i) => (
-              <div
-                key={`u-${i}`}
-                className="mb-3 rounded-xl bg-white p-3 shadow"
-              >
-                You: {m}
-              </div>
-            ))}
+            <div className="h-full overflow-y-auto rounded-xl border bg-[#faf7f2] p-4">
+              <p className="mb-3 text-sm font-bold text-[#7a3b1d]">Happy Office replies</p>
+
+              {(openedUser.privateAdminMessages || []).length === 0 ? (
+                <div className="rounded-xl bg-white p-3 text-sm shadow">
+                  The team reply will appear here.
+                </div>
+              ) : (
+                (openedUser.privateAdminMessages || []).map((m, i) => (
+                  <div key={`private-admin-${i}`} className="mb-3 whitespace-pre-line rounded-xl bg-[#7a3b1d] p-3 text-white">
+                    {m}
+                  </div>
+                ))
+              )}
+            </div>
           </div>
 
           <textarea
             maxLength={MAX_USER_MESSAGE_LENGTH + 80}
             value={chatInput}
             onChange={(e) => setChatInput(e.target.value)}
-            placeholder={openedUser.status === "Active" ? "Write one short message for Elvy..." : "Write one short message..."}
+            placeholder="Write your message here to contact the team..."
             className="mt-4 h-24 w-full rounded-xl border px-4 py-3"
           />
 
-          <p
-            className={`mt-1 text-sm font-semibold ${
-              chatInput.length > MAX_USER_MESSAGE_LENGTH
-                ? "text-red-700"
-                : "text-gray-600"
-            }`}
-          >
+          <p className={`mt-1 text-sm font-semibold ${chatInput.length > MAX_USER_MESSAGE_LENGTH ? "text-red-700" : "text-gray-600"}`}>
             {chatInput.length}/{MAX_USER_MESSAGE_LENGTH}
           </p>
 
-          <button
-            onClick={sendUserChatMessage}
-            className="mt-3 rounded-xl bg-[#7a3b1d] px-6 py-3 font-bold text-white"
-          >
+          <button onClick={sendUserChatMessage} className="mt-3 rounded-xl bg-[#7a3b1d] px-6 py-3 font-bold text-white">
             Send
           </button>
         </div>
@@ -998,33 +996,21 @@ const interval = window.setInterval(async () => {
       {dashboardOpen && isAdmin && (
         <section className="absolute left-[4%] top-[12%] z-30 h-[84%] w-[92%] overflow-hidden rounded-3xl bg-white/95 p-8 shadow-2xl">
           <div className="h-full overflow-y-auto">
-            <h1 className="text-4xl font-bold text-[#7a3b1d]">
-              Daily Support Dashboard
-            </h1>
+            <h1 className="text-4xl font-bold text-[#7a3b1d]">Daily Support Dashboard</h1>
 
             <div className="mt-6 grid grid-cols-6 gap-4">
               <div className="rounded-xl bg-white p-4 shadow">
                 <p>Room</p>
-                <p className="text-2xl font-bold">
-                  {roomOpen ? "Open" : "Closed"}
-                </p>
-                <button
-                  onClick={() => setRoomOpen(!roomOpen)}
-                  className="mt-3 rounded bg-[#7a3b1d] px-4 py-2 text-white"
-                >
+                <p className="text-2xl font-bold">{roomOpen ? "Open" : "Closed"}</p>
+                <button onClick={() => setRoomOpen(!roomOpen)} className="mt-3 rounded bg-[#7a3b1d] px-4 py-2 text-white">
                   {roomOpen ? "Close Room" : "Open Room"}
                 </button>
               </div>
 
               <div className="rounded-xl bg-white p-4 shadow">
                 <p>Code Generation</p>
-                <p className="text-2xl font-bold">
-                  {codeGenerationOpen ? "Open" : "Closed"}
-                </p>
-                <button
-                  onClick={() => setCodeGenerationOpen(!codeGenerationOpen)}
-                  className="mt-3 rounded bg-black px-4 py-2 text-white"
-                >
+                <p className="text-2xl font-bold">{codeGenerationOpen ? "Open" : "Closed"}</p>
+                <button onClick={() => setCodeGenerationOpen(!codeGenerationOpen)} className="mt-3 rounded bg-black px-4 py-2 text-white">
                   {codeGenerationOpen ? "Close Codes" : "Open Codes"}
                 </button>
               </div>
@@ -1032,10 +1018,7 @@ const interval = window.setInterval(async () => {
               <div className="rounded-xl bg-white p-4 shadow">
                 <p>Telegram</p>
                 <p className="text-2xl font-bold">Sync Users</p>
-                <button
-                  onClick={syncTelegramUsers}
-                  className="mt-3 rounded bg-blue-700 px-4 py-2 text-white"
-                >
+                <button onClick={syncTelegramUsers} className="mt-3 rounded bg-blue-700 px-4 py-2 text-white">
                   Sync Telegram Users
                 </button>
               </div>
@@ -1057,9 +1040,7 @@ const interval = window.setInterval(async () => {
             </div>
 
             <div className="mt-8 overflow-x-auto rounded-2xl bg-white p-5 shadow">
-                <h2 className="text-2xl font-bold text-[#7a3b1d]">
-                 User Requests
-              </h2>
+              <h2 className="text-2xl font-bold text-[#7a3b1d]">User Requests</h2>
 
               <table className="mt-4 w-full min-w-[1500px] text-sm">
                 <thead>
@@ -1082,9 +1063,7 @@ const interval = window.setInterval(async () => {
                     <Fragment key={u.code}>
                       <tr className={`border-b ${rowColor(u.status)}`}>
                         <td className="p-3 font-bold">{u.code}</td>
-                        <td className="p-3 font-bold">
-                          {u.setupAccessNumber || "Not sent"}
-                        </td>
+                        <td className="p-3 font-bold">{u.setupAccessNumber || "Not sent"}</td>
                         <td className="p-3">{u.name}</td>
                         <td className="p-3">{u.ageGroup}</td>
                         <td className="p-3">{u.helpType}</td>
@@ -1093,13 +1072,9 @@ const interval = window.setInterval(async () => {
                         </td>
                         <td className="p-3">
                           {u.telegramChatId ? (
-                            <span className="rounded bg-green-100 px-2 py-1 font-bold text-green-800">
-                              Synced
-                            </span>
+                            <span className="rounded bg-green-100 px-2 py-1 font-bold text-green-800">Synced</span>
                           ) : u.contactMethod === "Telegram" ? (
-                            <span className="rounded bg-red-100 px-2 py-1 font-bold text-red-800">
-                              Not synced
-                            </span>
+                            <span className="rounded bg-red-100 px-2 py-1 font-bold text-red-800">Not synced</span>
                           ) : (
                             <span className="text-gray-500">—</span>
                           )}
@@ -1117,13 +1092,7 @@ const interval = window.setInterval(async () => {
                               In Chat
                             </button>
                           ) : (
-                            <span
-                              className={`rounded-full border px-3 py-1 font-bold ${statusBadge(
-                                u.status
-                              )}`}
-                            >
-                              {u.status}
-                            </span>
+                            <span className={`rounded-full border px-3 py-1 font-bold ${statusBadge(u.status)}`}>{u.status}</span>
                           )}
                         </td>
                         <td className="p-3">
@@ -1140,46 +1109,26 @@ const interval = window.setInterval(async () => {
                           <span className="ml-2">used {u.repliesUsed}</span>
                         </td>
                         <td className="space-x-2 p-3">
-                          <button
-                            onClick={() => sendSetupMessage(u.code)}
-                            className="rounded bg-blue-700 px-3 py-1 text-white"
-                          >
+                          <button onClick={() => sendSetupMessage(u.code)} className="rounded bg-blue-700 px-3 py-1 text-white">
                             Send Access
                           </button>
 
-                          <button
-                            onClick={() => activateElvy(u.code)}
-                            className="rounded bg-green-700 px-3 py-1 text-white"
-                          >
+                          <button onClick={() => activateElvy(u.code)} className="rounded bg-green-700 px-3 py-1 text-white">
                             Activate Elvy
                           </button>
 
-                          <button
-                            onClick={() =>
-                              updateUser(u.code, { status: "Suspended" })
-                            }
-                            className="rounded bg-yellow-600 px-3 py-1 text-white"
-                          >
+                          <button onClick={() => updateUser(u.code, { status: "Suspended" })} className="rounded bg-yellow-600 px-3 py-1 text-white">
                             Suspend
                           </button>
 
-                          <button
-                            onClick={() =>
-                              updateUser(u.code, { status: "Blocked" })
-                            }
-                            className="rounded bg-red-700 px-3 py-1 text-white"
-                          >
+                          <button onClick={() => updateUser(u.code, { status: "Blocked" })} className="rounded bg-red-700 px-3 py-1 text-white">
                             Block
                           </button>
 
                           <button
                             disabled={!canDeleteUser(u)}
                             onClick={() => deleteUser(u.code)}
-                            className={`rounded px-3 py-1 text-white ${
-                              canDeleteUser(u)
-                                ? "bg-black"
-                                : "cursor-not-allowed bg-gray-400"
-                            }`}
+                            className={`rounded px-3 py-1 text-white ${canDeleteUser(u) ? "bg-black" : "cursor-not-allowed bg-gray-400"}`}
                           >
                             Delete
                           </button>
@@ -1192,46 +1141,38 @@ const interval = window.setInterval(async () => {
                             <div className="rounded-2xl border bg-white p-5 shadow">
                               <div className="flex items-start justify-between gap-4">
                                 <div>
-                                  <h3 className="text-xl font-bold text-[#7a3b1d]">
-                                    Chat with {u.name}
-                                  </h3>
-                                  <p className="text-sm font-semibold text-[#4b2a12]">
-                                    Help selected: {u.helpType}
-                                  </p>
-                                  <p className="text-sm font-semibold text-[#4b2a12]">
-                                    Memory: {getMemorySummary(u.memory)}
-                                  </p>
-                                  <p className="text-sm font-semibold text-[#4b2a12]">
-                                    Code: {u.code}
-                                  </p>
+                                  <h3 className="text-xl font-bold text-[#7a3b1d]">Chat with {u.name}</h3>
+                                  <p className="text-sm font-semibold text-[#4b2a12]">Help selected: {u.helpType}</p>
+                                  <p className="text-sm font-semibold text-[#4b2a12]">Memory: {getMemorySummary(u.memory)}</p>
+                                  <p className="text-sm font-semibold text-[#4b2a12]">Code: {u.code}</p>
                                 </div>
 
-                                <button
-                                  onClick={() => toggleAdminChat(u.code)}
-                                  className="rounded bg-black px-3 py-1 text-sm text-white"
-                                >
+                                <button onClick={() => toggleAdminChat(u.code)} className="rounded bg-black px-3 py-1 text-sm text-white">
                                   Hide Chat
                                 </button>
                               </div>
 
                               <div className="mt-4 max-h-[260px] overflow-y-auto rounded-xl border bg-[#faf7f2] p-4">
-                                {u.adminMessages.map((m, i) => (
-                                  <div
-                                    key={`admin-${u.code}-${i}`}
-                                    className="mb-3 whitespace-pre-line rounded-xl bg-[#7a3b1d] p-3 text-white"
-                                  >
-                                    Happy Office: {m}
+                                {(u.privateUserMessages || []).length === 0 &&
+                                (u.privateAdminMessages || []).length === 0 ? (
+                                  <div className="rounded-xl bg-white p-3 text-sm shadow">
+                                    No private admin chat messages yet.
                                   </div>
-                                ))}
+                                ) : (
+                                  <>
+                                    {(u.privateUserMessages || []).map((m, i) => (
+                                      <div key={`private-user-${u.code}-${i}`} className="mb-3 rounded-xl bg-white p-3 shadow">
+                                        User: {m}
+                                      </div>
+                                    ))}
 
-                                {u.userMessages.map((m, i) => (
-                                  <div
-                                    key={`user-${u.code}-${i}`}
-                                    className="mb-3 rounded-xl bg-white p-3 shadow"
-                                  >
-                                    User: {m}
-                                  </div>
-                                ))}
+                                    {(u.privateAdminMessages || []).map((m, i) => (
+                                      <div key={`private-admin-${u.code}-${i}`} className="mb-3 whitespace-pre-line rounded-xl bg-[#7a3b1d] p-3 text-white">
+                                        Happy Office: {m}
+                                      </div>
+                                    ))}
+                                  </>
+                                )}
                               </div>
 
                               <textarea
@@ -1246,10 +1187,7 @@ const interval = window.setInterval(async () => {
                                 className="mt-4 h-24 w-full rounded-xl border px-4 py-3"
                               />
 
-                              <button
-                                onClick={() => sendAdminReply(u.code)}
-                                className="mt-3 rounded-xl bg-[#7a3b1d] px-6 py-3 font-bold text-white"
-                              >
+                              <button onClick={() => sendAdminReply(u.code)} className="mt-3 rounded-xl bg-[#7a3b1d] px-6 py-3 font-bold text-white">
                                 Send Reply
                               </button>
                             </div>
@@ -1270,9 +1208,7 @@ const interval = window.setInterval(async () => {
               </table>
             </div>
 
-            <p className="mt-4 text-lg font-semibold">
-              AI Replies Used: {totalReplies}
-            </p>
+            <p className="mt-4 text-lg font-semibold">AI Replies Used: {totalReplies}</p>
           </div>
         </section>
       )}
