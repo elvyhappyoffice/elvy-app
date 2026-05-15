@@ -963,7 +963,7 @@ async function savePaymentSettings() {
           </div>
 
           {ticketsRemaining <= 0 && (
-            <div className="mt-4 rounded-xl bg-red-50 p-4 font-semibold text-red-800">
+            <div className="mt-4 rounded-xl bg-red-50 p-4 font-semibold text-red-2000">
               No AI tickets are currently available. Add more AI budget to continue generating new codes or tickets.
             </div>
           )}

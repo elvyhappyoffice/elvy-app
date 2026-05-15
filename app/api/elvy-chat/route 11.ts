@@ -72,9 +72,6 @@ PSYCHOLOGICAL COMMUNICATION STYLE:
 - Avoid repeating the word "communication" unless it is necessary.
 - Do not restart the conversation after each user message.
 - Continue naturally from what the user says.
-- Messages like "ok", "yes", "continue", "what else", "why", or "maybe" may depend on recent conversation context.
-- Do not treat short follow-up replies as isolated questions.
-- Use recent conversation flow before answering.
 
 COMMUNICATION ROLE:
 - Help the user express thoughts, messages, replies, apologies, requests, refusals, concerns, and feelings clearly.
@@ -175,10 +172,6 @@ export async function POST(req: Request) {
 
     const code = String(body.code || "").trim();
 
-    const recentMessages = Array.isArray(body.recentMessages)
-      ? body.recentMessages.slice(-8)
-      : [];
-
     if (!userMessage) {
       return NextResponse.json({
         success: false,
@@ -229,21 +222,10 @@ export async function POST(req: Request) {
       }
     }
 
-    const conversationInput = [
-      ...recentMessages.map((msg: any) => ({
-        role: msg.sender === "elvy" ? "assistant" : "user",
-        content: String(msg.text || "").slice(0, 500),
-      })),
-      {
-        role: "user",
-        content: userMessage,
-      },
-    ];
-
     const response = await openai.responses.create({
       model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
       instructions: ELVY_SYSTEM_PROMPT,
-      input: conversationInput,
+      input: userMessage,
       max_output_tokens: MAX_OUTPUT_TOKENS,
     });
 

@@ -206,7 +206,6 @@ export default function MobileElvyPage() {
         body: JSON.stringify({
           message: text,
           code: codeToSend,
-          recentMessages: messages.slice(-6),
         }),
       });
 
@@ -380,7 +379,7 @@ export default function MobileElvyPage() {
               {showTicketInfo && (
                 <div className="rounded-2xl bg-[#f7eadb] p-3 text-sm text-[#3b2418]">
                   <p className="font-semibold">Elvy Ticket</p>
-                  <p className="mt-1">One message ticket gives you 2000 text credits.</p>
+                  <p className="mt-1">One message ticket gives you 800 text credits.</p>
                   <p className="mt-1">Voice access will be available later as a separate ticket.</p>
                   <p className="mt-1">After payment, enter your activation code to unlock Elvy.</p>
 

@@ -1,6 +1,6 @@
 {
-  "paypalActive": true,
-  "paypalLink": "elvy.happyoffice@gmail.com",
+  "paypalActive": false,
+  "paypalLink": "",
   "skrillActive": false,
   "skrillLink": ""
 }

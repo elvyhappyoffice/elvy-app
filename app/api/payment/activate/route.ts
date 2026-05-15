@@ -20,8 +20,8 @@ type SupportUser = {
 };
 
 const DATA_FILE = path.join(process.cwd(), "data", "dailySupportUsers.json");
-const REPLIES_LIMIT = 800;
-const CREDITS = 800;
+const REPLIES_LIMIT = 2000;
+const CREDITS = 2000;
 
 function readUsers(): SupportUser[] {
   try {

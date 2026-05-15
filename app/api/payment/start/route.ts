@@ -41,7 +41,7 @@ const HAPPY_OFFICE_EMAIL = "elvy.happyoffice@gmail.com";
 
 // User-facing credit display.
 // Admin dashboard still works with replies.
-// Paid plan example: repliesLimit = 800 => 800 credits.
+// Paid plan example: repliesLimit = 2000 => 2000 credits.
 // Therefore, 1 replies = 1 credit.
 const REPLIES_PER_CREDIT = 1;
 const CREDIT_NOTICE_INTERVAL_REPLIES = 100;
