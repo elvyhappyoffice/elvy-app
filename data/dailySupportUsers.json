@@ -1,85 +1,33 @@
 [
   {
-    "code": "VISITOR-1778925479197",
+    "code": "VISITOR-1778952698477",
     "name": "Said",
     "contactMethod": "Telegram",
     "contactValue": "@saidrighton",
     "status": "Active",
-    "repliesLimit": 10,
-    "repliesUsed": 10,
+    "repliesLimit": 3,
+    "repliesUsed": 2,
     "adminMessages": [
       "Welcome to Happy Office for communication and learning.\n\nElvy will be with you shortly.",
       "Hello again.\n\nI’m Elvy, a calm communication companion from Happy Office.\n\nYou can send a short message whenever you feel ready.",
-      "Hello! I’m here whenever you want to talk calmly and clearly.",
-      "Hello. I’m here to listen calmly.",
-      "Hello. I’m here with calm and simple support whenever you want.",
-      "Okay. Take your time.",
-      "Thank you. Feel free to share more whenever you like.",
-      "Thank you for letting me know. Take your time."
+      "Hello. I hope your day begins gently.",
+      "Okay. Let me know if you want to talk or ask anything."
     ],
     "userMessages": [
-      "/start",
       "hello",
-      "hello",
-      "ok",
-      "ok",
       "ok"
     ],
     "telegramChatId": "7517285147",
     "memory": {
       "telegramFirstName": "Said",
       "telegramUsername": "@saidrighton",
-      "firstContactAt": "2026-05-16T09:57:59.198Z",
+      "firstContactAt": "2026-05-16T17:31:38.478Z",
       "freeTrial": true,
       "lastUserMessage": "ok",
-      "lastElvyReply": "Thank you for letting me know. Take your time.",
+      "lastElvyReply": "Okay. Let me know if you want to talk or ask anything.",
       "lastIntent": "general",
       "lastReplyScore": 100,
-      "lastReplyCheckedAt": "2026-05-16T10:51:48.517Z",
-      "lastReplyAutoCorrected": false,
-      "needsPromptReview": false
-    },
-    "paymentNoticeSent": true,
-    "paid": false,
-    "paymentStatus": "Unpaid",
-    "lastPaymentNoticeKey": "PayPal: elvy.happyoffice@gmail.com?code=VISITOR-1778925479197",
-    "lastMobileReplyAt": "2026-05-16T12:46:29.846Z"
-  },
-  {
-    "code": "VISITOR-1778926592715",
-    "name": "Phil",
-    "contactMethod": "Telegram",
-    "contactValue": "@flippe2",
-    "status": "Active",
-    "repliesLimit": 42,
-    "repliesUsed": 5,
-    "adminMessages": [
-      "Welcome to Happy Office for communication and learning.\n\nElvy will be with you shortly.",
-      "Hello again.\n\nI’m Elvy, a calm communication companion from Happy Office.\n\nYou can send a short message whenever you feel ready.",
-      "Oui, c’est surprenant pour la mi-mai. Le temps peut parfois être imprévisible. Tu espérais un peu plus chaud ?",
-      "Le temps change vite parfois. Un thé chaud semble une bonne idée pour se réchauffer doucement. Tu aimes quel parfum de thé ?",
-      "Une infusion de fruits rouges, c’est parfait pour réchauffer sans se priver de saveurs. Tu apprécies quelles notes surtout ?",
-      "Haha, toute la gamme, ça donne de la variété et du plaisir à chaque tasse !",
-      "Le trou dans l’os, appelé canal médullaire, contient la moelle osseuse. La moelle fabrique des cellules sanguines importantes pour le corps. C’est une partie vitale pour la santé et le renouvellement du sang."
-    ],
-    "userMessages": [
-      "c'est mi-mai et il fait 10 degrés en Suisse, tu as déjà vu ça ?",
-      "il y a un mois et demi j'achetais des glaces pour en manger chaque jour tellement il faisait chaud alors. Maintenant je crois que je vais faire un thé chaud",
-      "c'est une infusioon de fruits rouges, ça a plus de gout que les autres",
-      "toute la gamme hhhh",
-      "Quelle est l'utilité d'avoir un trou et de la moelle dans les os"
-    ],
-    "telegramChatId": "6896058589",
-    "memory": {
-      "telegramFirstName": "Phil",
-      "telegramUsername": "@flippe2",
-      "firstContactAt": "2026-05-16T10:16:32.716Z",
-      "freeTrial": true,
-      "lastUserMessage": "Quelle est l'utilité d'avoir un trou et de la moelle dans les os",
-      "lastElvyReply": "Le trou dans l’os, appelé canal médullaire, contient la moelle osseuse. La moelle fabrique des cellules sanguines importantes pour le corps. C’est une partie vitale pour la santé e",
-      "lastIntent": "general",
-      "lastReplyScore": 100,
-      "lastReplyCheckedAt": "2026-05-16T10:24:47.049Z",
+      "lastReplyCheckedAt": "2026-05-16T17:36:23.556Z",
       "lastReplyAutoCorrected": false,
       "needsPromptReview": false
     },

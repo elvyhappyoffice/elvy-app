@@ -23,8 +23,53 @@ function saveUsers(users: any[]) {
 }
 
 export async function GET() {
+  try {
+    const { data, error } = await supabase
+      .from("daily_support_users")
+      .select("*");
+
+    if (!error && data && data.length > 0) {
+      const users = data.map((user: any) => ({
+        code: user.code,
+        name: user.name,
+        contactMethod: user.contact_method,
+        contactValue: user.contact_value,
+        status: user.status,
+        repliesLimit: user.replies_limit,
+        repliesUsed: user.replies_used,
+        telegramChatId: user.telegram_chat_id,
+        adminMessages: user.admin_messages || [],
+        userMessages: user.user_messages || [],
+        memory: user.memory || {},
+        paymentNoticeSent: user.payment_notice_sent || false,
+        paid: user.paid || false,
+        paymentStatus: user.payment_status,
+        paymentMethod: user.payment_method,
+        paymentReference: user.payment_reference,
+        paidAt: user.paid_at,
+        ageGroup: "18–30",
+        helpType: "General support",
+        aiCost: 0,
+        contactCost: 0,
+        startDate: "",
+        endDate: "",
+      }));
+
+      return NextResponse.json({
+        success: true,
+        users,
+      });
+    }
+  } catch (error) {
+    console.log("Supabase GET fallback:", error);
+  }
+
   const users = readUsers();
-  return NextResponse.json({ success: true, users });
+
+  return NextResponse.json({
+    success: true,
+    users,
+  });
 }
 
 export async function POST(req: NextRequest) {
