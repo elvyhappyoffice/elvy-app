@@ -76,11 +76,13 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
   const users = Array.isArray(body.users) ? body.users : [];
 
-  // Keep local JSON as stable fallback
+// Local JSON only outside Vercel
+if (!process.env.VERCEL) {
   saveUsers(users);
+}
 
-  // Parallel Supabase save
-  try {
+// Supabase save
+try {
     await supabase.from("daily_support_users").delete().neq("id", 0);
 
     if (users.length > 0) {
