@@ -686,7 +686,7 @@ if (
   user.paymentNoticeSent &&
   (user as any).lastPaymentNoticeKey === currentPaymentNoticeKey
 ) {
-  user.paymentNoticeSent = false;
+  return NextResponse.json({ ok: true });
 }
 
       const founderSettings = readFounderSettings();

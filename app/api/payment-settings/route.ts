@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
+import { supabase } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 
@@ -43,6 +44,28 @@ function saveSettings(settings: PaymentSettings) {
 }
 
 export async function GET() {
+  try {
+    const { data, error } = await supabase
+      .from("payment_settings")
+      .select("*")
+      .eq("id", 1)
+      .maybeSingle();
+
+    if (!error && data) {
+      return NextResponse.json({
+        ok: true,
+        settings: {
+          paypalActive: Boolean(data.paypal_active),
+          paypalLink: data.paypal_link || "",
+          skrillActive: Boolean(data.skrill_active),
+          skrillLink: data.skrill_link || "",
+        },
+      });
+    }
+  } catch (error) {
+    console.log("Supabase payment settings GET fallback:", error);
+  }
+
   return NextResponse.json({
     ok: true,
     settings: readSettings(),
@@ -60,7 +83,25 @@ export async function POST(req: NextRequest) {
       skrillLink: String(body.skrillLink || "").trim(),
     };
 
-    saveSettings(settings);
+    // Local JSON only outside Vercel
+    if (!process.env.VERCEL) {
+      saveSettings(settings);
+    }
+
+    // Supabase save
+    const { error } = await supabase
+      .from("payment_settings")
+      .upsert({
+        id: 1,
+        paypal_active: settings.paypalActive,
+        paypal_link: settings.paypalLink,
+        skrill_active: settings.skrillActive,
+        skrill_link: settings.skrillLink,
+      });
+
+    if (error) {
+      console.error("Payment settings Supabase save error:", error);
+    }
 
     return NextResponse.json({ ok: true, settings });
   } catch {

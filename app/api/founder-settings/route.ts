@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
+import { supabase } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 
@@ -38,6 +39,25 @@ function saveSettings(settings: FounderSettings) {
 }
 
 export async function GET() {
+  try {
+    const { data, error } = await supabase
+      .from("founder_settings")
+      .select("*")
+      .eq("id", 1)
+      .maybeSingle();
+
+    if (!error && data) {
+      return NextResponse.json({
+        ok: true,
+        settings: {
+          automaticPaymentOpen: Boolean(data.automatic_payment_open),
+        },
+      });
+    }
+  } catch (error) {
+    console.log("Supabase founder settings GET fallback:", error);
+  }
+
   const settings = readSettings();
   return NextResponse.json({ ok: true, settings });
 }
@@ -50,7 +70,22 @@ export async function POST(req: NextRequest) {
       automaticPaymentOpen: Boolean(body.automaticPaymentOpen),
     };
 
-    saveSettings(settings);
+    // Local JSON only outside Vercel
+    if (!process.env.VERCEL) {
+      saveSettings(settings);
+    }
+
+    // Supabase save
+    const { error } = await supabase
+      .from("founder_settings")
+      .upsert({
+        id: 1,
+        automatic_payment_open: settings.automaticPaymentOpen,
+      });
+
+    if (error) {
+      console.error("Founder settings Supabase save error:", error);
+    }
 
     return NextResponse.json({ ok: true, settings });
   } catch {

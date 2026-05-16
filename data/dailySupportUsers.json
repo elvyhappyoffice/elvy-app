@@ -5,17 +5,25 @@
     "contactMethod": "Telegram",
     "contactValue": "@saidrighton",
     "status": "Active",
-    "repliesLimit": 3,
-    "repliesUsed": 2,
+    "repliesLimit": 6,
+    "repliesUsed": 6,
     "adminMessages": [
       "Welcome to Happy Office for communication and learning.\n\nElvy will be with you shortly.",
       "Hello again.\n\nI’m Elvy, a calm communication companion from Happy Office.\n\nYou can send a short message whenever you feel ready.",
       "Hello. I hope your day begins gently.",
-      "Okay. Let me know if you want to talk or ask anything."
+      "Okay. Let me know if you want to talk or ask anything.",
+      "Hello! How are you feeling today?",
+      "I’m glad to hear you’re feeling good.",
+      "Thanks for letting me know. Take your time.",
+      "You’re welcome. I’m here whenever you want to chat."
     ],
     "userMessages": [
       "hello",
-      "ok"
+      "ok",
+      "helo",
+      "good",
+      "ok",
+      "thanks"
     ],
     "telegramChatId": "7517285147",
     "memory": {
@@ -23,16 +31,17 @@
       "telegramUsername": "@saidrighton",
       "firstContactAt": "2026-05-16T17:31:38.478Z",
       "freeTrial": true,
-      "lastUserMessage": "ok",
-      "lastElvyReply": "Okay. Let me know if you want to talk or ask anything.",
+      "lastUserMessage": "thanks",
+      "lastElvyReply": "You’re welcome. I’m here whenever you want to chat.",
       "lastIntent": "general",
       "lastReplyScore": 100,
-      "lastReplyCheckedAt": "2026-05-16T17:36:23.556Z",
+      "lastReplyCheckedAt": "2026-05-16T22:51:44.415Z",
       "lastReplyAutoCorrected": false,
       "needsPromptReview": false
     },
-    "paymentNoticeSent": false,
+    "paymentNoticeSent": true,
     "paid": false,
-    "paymentStatus": "Unpaid"
+    "paymentStatus": "Unpaid",
+    "lastPaymentNoticeKey": "PayPal: elvy.happyoffice@gmail.com?code=VISITOR-1778952698477"
   }
 ]
