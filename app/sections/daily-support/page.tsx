@@ -334,7 +334,7 @@ export default function DailySupportPage() {
 
         return currentUsers;
       });
-    }, 1000);
+    }, 10000);
 
     return () => window.clearInterval(interval);
   }, [storageReady]);
