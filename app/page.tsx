@@ -10,7 +10,7 @@ export default function HomePage() {
       <img
         src="/office.png"
         alt="Front page"
-        className="absolute inset-0 h-full w-full scale-[110]"
+        className="absolute inset-0 h-full w-full"
         style={{
           objectFit: "fill",
           objectPosition: "center",
