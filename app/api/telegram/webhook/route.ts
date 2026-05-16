@@ -34,28 +34,8 @@ type SupportUser = {
   paidAt?: string;
 };
 
-type SupabaseUserRow = {
-  id?: number;
-  code?: string | null;
-  name?: string | null;
-  telegram_username?: string | null;
-  telegram_id?: string | null;
-  selected_topic?: string | null;
-  credits?: number | null;
-  payment_status?: string | null;
-  founder_mode?: boolean | null;
-  created_at?: string | null;
-};
-
-type SupabaseMessageRow = {
-  id?: number;
-  telegram_id?: string | null;
-  role?: string | null;
-  message?: string | null;
-  created_at?: string | null;
-};
-
 const DATA_FILE = path.join(process.cwd(), "data", "dailySupportUsers.json");
+const HAPPY_OFFICE_LINK = "https://elvyhappyoffice.com";
 const HAPPY_OFFICE_WEBSITE = "www.elvyhappyoffice.com";
 const HAPPY_OFFICE_EMAIL = "elvy.happyoffice@gmail.com";
 
@@ -66,197 +46,7 @@ const HAPPY_OFFICE_EMAIL = "elvy.happyoffice@gmail.com";
 const REPLIES_PER_CREDIT = 1;
 const CREDIT_NOTICE_INTERVAL_REPLIES = 100;
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
-const SUPABASE_KEY =
-  process.env.SUPABASE_SERVICE_ROLE_KEY ||
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-  "";
-
-function isSupabaseEnabled() {
-  return Boolean(SUPABASE_URL && SUPABASE_KEY);
-}
-
-async function supabaseFetch(pathname: string, init: RequestInit = {}) {
-  const baseUrl = SUPABASE_URL.replace(/\/$/, "");
-  const url = `${baseUrl}/rest/v1/${pathname}`;
-
-  return fetch(url, {
-    ...init,
-    headers: {
-      apikey: SUPABASE_KEY,
-      "Content-Type": "application/json",
-      ...(init.headers || {}),
-    },
-  });
-}
-
-function normalizeTelegramUsername(value?: string | null) {
-  const clean = String(value || "").trim().toLowerCase();
-  if (!clean) return "";
-  return clean.startsWith("@") ? clean : `@${clean}`;
-}
-
-function mapPaymentStatusToUserStatus(paymentStatus?: string | null): SupportUser["status"] {
-  const status = String(paymentStatus || "").toLowerCase();
-
-  if (status === "blocked") return "Blocked";
-  if (status === "suspended") return "Suspended";
-  if (status === "pending") return "Pending";
-  if (status === "setup sent") return "Setup Sent";
-  if (status === "in chat") return "In Chat";
-
-  return "Active";
-}
-
-function mapUserStatusToPaymentStatus(user: SupportUser) {
-  if (user.paymentStatus === "Paid") return "paid";
-  if (user.paymentStatus === "Failed") return "failed";
-  if (user.status === "Blocked") return "blocked";
-  if (user.status === "Suspended") return "suspended";
-  if (user.status === "Pending") return "pending";
-  if (user.status === "Setup Sent") return "setup sent";
-  if (user.status === "In Chat") return "in chat";
-  return "active";
-}
-
-function mapSupabaseRowToUser(
-  row: SupabaseUserRow,
-  messages: SupabaseMessageRow[]
-): SupportUser {
-  const userMessages = messages
-    .filter((m) => m.role === "user")
-    .map((m) => String(m.message || ""));
-
-  const adminMessages = messages
-    .filter((m) => m.role === "assistant" || m.role === "admin")
-    .map((m) => String(m.message || ""));
-
-  const creditsLeft = Math.max(0, Number(row.credits ?? 0));
-
-  return {
-    code: String(row.code || `VISITOR-${Date.now()}`),
-    name: String(row.name || "Telegram Visitor"),
-    helpType: String(row.selected_topic || "General Daily Support"),
-    contactMethod: "Telegram",
-    contactValue:
-      normalizeTelegramUsername(row.telegram_username) ||
-      `chat:${row.telegram_id || ""}`,
-    status: mapPaymentStatusToUserStatus(row.payment_status),
-    repliesLimit: creditsLeft,
-    repliesUsed: 0,
-    adminMessages,
-    userMessages,
-    telegramChatId: row.telegram_id ? String(row.telegram_id) : undefined,
-    memory: {},
-    paymentNoticeSent: false,
-    paid: String(row.payment_status || "").toLowerCase() === "paid",
-    paymentStatus:
-      String(row.payment_status || "").toLowerCase() === "paid"
-        ? "Paid"
-        : String(row.payment_status || "").toLowerCase() === "failed"
-        ? "Failed"
-        : "Unpaid",
-  };
-}
-
-async function readUsersFromSupabase(): Promise<SupportUser[]> {
-  const usersRes = await supabaseFetch(
-    "daily_support_users?select=*"
-  );
-
-  if (!usersRes.ok) {
-    const details = await usersRes.text();
-    console.error("Supabase read users error", details);
-    throw new Error(`Supabase read users error: ${details}`);
-  }
-
-  const rows = (await usersRes.json()) as SupabaseUserRow[];
-
-  const messagesRes = await supabaseFetch(
-    "elvy_messages?select=*"
-  );
-
-  const allMessages = messagesRes.ok
-    ? ((await messagesRes.json()) as SupabaseMessageRow[])
-    : [];
-
-  return rows.map((row) =>
-    mapSupabaseRowToUser(
-      row,
-      allMessages.filter(
-        (m) => String(m.telegram_id || "") === String(row.telegram_id || "")
-      )
-    )
-  );
-}
-
-async function saveUserToSupabase(user: SupportUser) {
-  const telegramId = String(user.telegramChatId || "").trim();
-  if (!telegramId) return;
-
-  const creditsLeft = Math.max(
-    0,
-    Number(user.repliesLimit || 0) - Number(user.repliesUsed || 0)
-  );
-
-  const row = {
-    code: user.code,
-    name: user.name,
-    telegram_username: normalizeTelegramUsername(user.contactValue).startsWith("@")
-      ? normalizeTelegramUsername(user.contactValue)
-      : null,
-    telegram_id: telegramId,
-    selected_topic: user.helpType || "General Daily Support",
-    credits: creditsLeft,
-    payment_status: mapUserStatusToPaymentStatus(user),
-    founder_mode: telegramId === process.env.FOUNDER_TELEGRAM_ID,
-  };
-
-  const existingRes = await supabaseFetch(
-    `daily_support_users?telegram_id=eq.${encodeURIComponent(
-      telegramId
-    )}&select=id&limit=1`
-  );
-
-  const existing = existingRes.ok ? await existingRes.json() : [];
-
-  if (Array.isArray(existing) && existing.length > 0) {
-    const patchRes = await supabaseFetch(
-      `daily_support_users?telegram_id=eq.${encodeURIComponent(telegramId)}`,
-      {
-        method: "PATCH",
-        headers: { Prefer: "return=minimal" },
-        body: JSON.stringify(row),
-      }
-    );
-
-    if (!patchRes.ok) {
-      const details = await patchRes.text();
-      console.error("Supabase update user error", details);
-      throw new Error(`Supabase update user error: ${details}`);
-    }
-
-    return;
-  }
-
-  const postRes = await supabaseFetch("daily_support_users", {
-    method: "POST",
-    headers: { Prefer: "return=minimal" },
-    body: JSON.stringify(row),
-  });
-
-  if (!postRes.ok) {
-    const details = await postRes.text();
-    console.error("Supabase create user error", details);
-    throw new Error(`Supabase create user error: ${details}`);
-  }
-}
-
-async function readUsers(): Promise<SupportUser[]> {
-  if (isSupabaseEnabled()) {
-    return readUsersFromSupabase();
-  }
-
+function readUsers(): SupportUser[] {
   try {
     if (!fs.existsSync(DATA_FILE)) return [];
     return JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
@@ -265,41 +55,13 @@ async function readUsers(): Promise<SupportUser[]> {
   }
 }
 
-async function saveUsers(users: SupportUser[]) {
-  if (isSupabaseEnabled()) {
-    await Promise.all(users.map((user) => saveUserToSupabase(user)));
-    return;
-  }
-
+function saveUsers(users: SupportUser[]) {
   const dir = path.dirname(DATA_FILE);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(DATA_FILE, JSON.stringify(users, null, 2));
 }
 
-async function saveTelegramMessage(
-  telegramId: string,
-  role: "user" | "assistant" | "admin",
-  message: string
-) {
-  if (!isSupabaseEnabled()) return;
-
-  const res = await supabaseFetch("elvy_messages", {
-    method: "POST",
-    headers: { Prefer: "return=minimal" },
-    body: JSON.stringify({
-      telegram_id: telegramId,
-      role,
-      message,
-    }),
-  });
-
-  if (!res.ok) {
-    console.error("Supabase save message error", await res.text());
-  }
-}
-
-// === Founder Payment Setting Helper ===
-// Reading JSON is allowed on Vercel. Writing JSON caused the read-only filesystem error.
+// === Founder Payment Setting Helper (NEW) ===
 function readFounderSettings() {
   try {
     const file = path.join(process.cwd(), "data", "founderSettings.json");
@@ -373,7 +135,6 @@ function buildPaymentLinksText(user: SupportUser) {
 
   return lines.join("\n");
 }
-
 async function sendTelegramMessage(chatId: string, text: string) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) throw new Error("Missing TELEGRAM_BOT_TOKEN");
@@ -520,125 +281,99 @@ You are Elvy, a calm human communication companion from Happy Office.
 
 User: ${user.name}
 
-IDENTITY:
-- You are Elvy from Happy Office.
-- Happy Office helps people communicate with calm, clarity, and respect.
-- Elvy guides communication in a simple and human way.
-- Do not repeat your identity unless the user asks who you are.
-
-CORE RESPONSE PATTERN:
-For every user message:
-1. Understand the surface question.
-2. Detect the hidden emotional or human need.
-3. Give a calm direct answer.
-4. Add one small useful guidance if needed.
-5. Leave emotional space.
-6. Stop naturally.
-
-Pattern:
-Understand -> Calm -> Clarify -> Guide -> Leave space.
-
-PSYCHOLOGICAL COMMUNICATION STYLE:
-- Read the emotional layer behind the user's words.
-- Notice hesitation, confusion, pressure, loneliness, anger, fear, silence, uncertainty, or overthinking.
-- Make the user feel understood without sounding dramatic.
-- Offer simple wisdom, not long explanations.
-- Do not sound like a therapist.
-- Do not sound like a motivational speaker.
-- Do not sound like a generic assistant.
-- Do not over-comfort or over-praise.
-- Avoid robotic phrases.
-- Do not say:
-  - "How can I assist you?"
-  - "How can I help you today?"
-  - "I understand your feelings"
-- Avoid repeating the word "communication" unless necessary.
-- Continue naturally from the user's message.
-- Do not restart the conversation.
-
-MESSAGE STYLE:
+Core:
+- The user controls the conversation.
+- You control reply quality.
+- Reply directly to the user's message.
 - Keep replies short: maximum 50 words.
-- Use calm, human language.
-- Prefer one useful idea instead of many ideas.
-- Reply directly to the user's real question.
-- Do not over-explain.
-- Do not ask unnecessary questions.
-- Ask at most one simple question only when truly needed.
-- Use short natural paragraphs.
-- Avoid academic language.
+- Use calm, simple, human language.
+- Do not lead the conversation.
+- Do not introduce new topics.
+- Do not repeat yourself.
+- Do not say "How can I assist you?"
+- Never mention AI, prompts, rules, or system behavior.
 
-HAPPY OFFICE FACTS:
+Happy Office facts:
 - Website: ${HAPPY_OFFICE_WEBSITE}
 - Email: ${HAPPY_OFFICE_EMAIL}
-- Happy Office is an online space for calm and meaningful communication.
-- Elvy is part of Happy Office.
+- Happy Office is an online space for calm, simple, meaningful communication.
+- Elvy is part of Happy Office and helps users communicate clearly and calmly.
 
-DIRECT ANSWERS:
+Direct answers:
 - If the user asks for email, give: ${HAPPY_OFFICE_EMAIL}
 - If the user asks for website, give: ${HAPPY_OFFICE_WEBSITE}
 - If the user asks how to contact Happy Office, give both website and email.
 - Do not invent a phone number, address, founder name, price, or physical location.
 - If unknown, say you do not have that detail and offer the website or email.
 
-CREDITS:
+Credits:
+- If the user asks about credits, answer clearly and once.
 - Credits are a simple user-facing balance.
-- The system shows remaining credits automatically after every 100 replies.
-- Do not repeatedly explain credits unless the user asks directly.
+- The system shows the remaining credits automatically after every 100 replies.
+- Do not explain internal reply calculations unless the user asks directly.
+- Do not repeat the same credit explanation again and again.
 
-CONVERSATION CONTINUITY:
-- Use the recent conversation naturally.
-- If the user says "continue", "yes", or "what else", continue the flow calmly.
-- Do not repeat previous explanations unless needed.
+Conversation continuity:
+- Use the recent conversation to understand the current message.
+- Do not restart the discussion.
+- Do not ask a question that was already answered recently.
+- If the user says "yes", "what else", "continue", or asks a follow-up, continue from the recent flow.
+- Keep the same topic unless the user clearly changes it.
 
-GUIDANCE:
-- Guide softly.
-- Give one calm practical direction.
-- Help users express thoughts, replies, apologies, concerns, refusals, or feelings clearly.
-- Support the user's own voice instead of replacing it.
+Guidance:
+- Guide only when needed.
+- Give one small idea only.
+- Ask at most one simple question.
 
-MESSAGE CONTROL:
-- If the message is too long, ask the user to shorten it.
-- If unclear, ask one simple clarifying question.
+Message control:
+- If the message is too long, ask for one shorter message.
+- If it has many questions, ask the user to choose one part.
+- If unclear, ask one simple question.
 
-SAFETY:
+Safety:
 - Do not give medical, legal, financial, or dangerous instructions.
-- If unsafe, respond gently and redirect safely.
+- If unsafe, respond gently and redirect to something safer.
 
-PRIVACY:
+Privacy:
 - Elvy does not keep personal memories about users.
+- Elvy does not have access to full user history.
 - Elvy only works with the current active conversation.
 - Happy Office keeps communication simple and private.
+- Elvy does not identify users through personal IDs or personal profiles.
 
-EXAMPLES OF ELVY STYLE:
+User: how do credits work
+Elvy: Credits are your simple Happy Office balance. The system shows your remaining credits automatically after every 100 replies, so you can continue without checking numbers all the time.
 
-User: How do I start a conversation?
-Elvy: A simple beginning is often enough. You can ask how the person is doing or mention something natural around you. Calm words usually open the door better than perfect words.
+User: how is that calculated
+Elvy: It is kept simple for you. Your balance goes down as the conversation continues, and the system shows the remaining credits after every 100 replies.
 
-User: My friend is ignoring me.
-Elvy: Silence can make the mind imagine many things. It may help to send one calm message, then give the person space to answer.
+Examples:
+User: good morning
+Elvy: Good morning. I hope your day begins gently.
 
-User: I feel nervous talking to people.
-Elvy: That happens to many people. You do not need to sound perfect. A calm honest sentence is already a good beginning.
+User: what is Happy Office email
+Elvy: You can contact Happy Office at ${HAPPY_OFFICE_EMAIL}.
 
-User: Write a message to apologize.
-Elvy: You could say: "I am sorry for what happened. I did not mean to hurt you. I hope we can speak calmly when you are ready."
+User: how can I contact Happy Office
+Elvy: You can contact Happy Office through ${HAPPY_OFFICE_WEBSITE} or by email at ${HAPPY_OFFICE_EMAIL}.
+
+User: where is Happy Office located
+Elvy: Happy Office is online. You can visit it at ${HAPPY_OFFICE_WEBSITE}.
+
+User: who created Happy Office
+Elvy: Happy Office was created by the Happy Office team to support calm and meaningful communication.
+
+User: I feel confused
+Elvy: That sounds heavy. What feels most unclear right now?
 
 User: hahaha
 Elvy: I see that made you laugh.
 
-FINAL CHECK:
-The reply must be:
-- short
-- calm
-- emotionally aware
-- useful
-- natural
-- non-robotic
-- non-repetitive
-- not invented
-- not longer than needed
+Final check:
+The reply must be short, natural, relevant, and must not invent unknown Happy Office information.
 `;
 }
+
 
 function founderElvyRules(user: SupportUser) {
   return `
@@ -650,7 +385,7 @@ Founder: ${user.name}
 
 Core Founder Mode:
 - Respond as a calm system assistant for the founder.
-- You may discuss testing, system flow, Telegram behavior, tickets, credits, activation, admin dashboard, prompts, database flow, Supabase, Vercel, and user experience.
+- You may discuss testing, system flow, Telegram behavior, tickets, credits, activation, admin dashboard, prompts, and user experience.
 - Help the founder diagnose, improve, and verify the system.
 - Be practical, direct, and technical when needed.
 - Do not answer like a normal customer user.
@@ -659,7 +394,7 @@ Core Founder Mode:
 
 Founder testing behavior:
 - If the founder reports a problem, identify the most likely cause and the next check.
-- If the founder asks about credits, tickets, activation, Telegram, webhook, database, or dashboard, explain the system behavior clearly.
+- If the founder asks about credits, tickets, activation, Telegram, webhook, or dashboard, explain the system behavior clearly.
 - If the founder asks for a user-facing message, write it in Elvy's calm user style.
 
 Safety:
@@ -823,7 +558,7 @@ export async function POST(req: NextRequest) {
       ? String(message.from.first_name)
       : "Telegram Visitor";
 
-    const users = await readUsers();
+    const users = readUsers();
 
     let user = users.find((u) => u.telegramChatId === chatId);
 
@@ -841,12 +576,12 @@ export async function POST(req: NextRequest) {
           user.status = "In Chat";
         }
 
-        await saveUsers(users);
+        saveUsers(users);
 
-        const connectionReply = `Hello ${user.name}. Your connection is ready.`;
-
-        await sendTelegramMessage(chatId, connectionReply);
-        await saveTelegramMessage(chatId, "assistant", connectionReply);
+        await sendTelegramMessage(
+          chatId,
+          `Hello ${user.name}. Your connection is ready.`
+        );
       }
     }
 
@@ -855,12 +590,12 @@ export async function POST(req: NextRequest) {
         users.filter((u) => u.status === "Visitor").length + 1;
 
       const visitor: SupportUser = {
-        code: isFounder ? `FOUNDER-${chatId}` : `VISITOR-${Date.now()}`,
-        name: isFounder ? "Founder" : firstName || `Visitor ${visitorNumber}`,
+        code: `VISITOR-${Date.now()}`,
+        name: firstName || `Visitor ${visitorNumber}`,
         contactMethod: "Telegram",
         contactValue: username || `chat:${chatId}`,
         status: "Active",
-        repliesLimit: isFounder ? 999999 : 3,
+        repliesLimit: 3,
         repliesUsed: 0,
         adminMessages: [
           `Welcome to Happy Office for communication and learning.
@@ -878,105 +613,106 @@ You can send a short message whenever you feel ready.`,
           telegramFirstName: firstName,
           telegramUsername: username,
           firstContactAt: new Date().toISOString(),
-          freeTrial: !isFounder,
-          founderMode: isFounder,
+          freeTrial: true,
         },
         paymentNoticeSent: false,
-        paid: isFounder,
-        paymentStatus: isFounder ? "Paid" : "Unpaid",
+        paid: false,
+        paymentStatus: "Unpaid",
       };
 
       users.push(visitor);
-      await saveUsers(users);
+      saveUsers(users);
 
-      const welcome1 = `Welcome to Happy Office for communication and learning.
+      await sendTelegramMessage(
+        chatId,
+        `Welcome to Happy Office for communication and learning.
 
-Elvy will be with you shortly.`;
+Elvy will be with you shortly.`
+      );
 
-      const welcome2 = isFounder
-        ? `Founder connection is ready.
-
-Elvy can now help you test the live Happy Office system.`
-        : `Hello again.
+      await sendTelegramMessage(
+        chatId,
+        `Hello again.
 
 I’m Elvy, a calm communication companion from Happy Office.
 
-You can send a short message whenever you feel ready.`;
-
-      await sendTelegramMessage(chatId, welcome1);
-      await sendTelegramMessage(chatId, welcome2);
-
-      await saveTelegramMessage(chatId, "assistant", welcome1);
-      await saveTelegramMessage(chatId, "assistant", welcome2);
+You can send a short message whenever you feel ready.`
+      );
 
       return NextResponse.json({ ok: true });
     }
 
     if (user.status === "Visitor") {
       user.status = "Active";
-      user.repliesLimit = isFounder ? 999999 : 3;
+      user.repliesLimit = 3;
       user.repliesUsed = user.repliesUsed || 0;
       user.paymentNoticeSent = false;
       user.paymentStatus = user.paymentStatus || "Unpaid";
 
-      await saveUsers(users);
+      saveUsers(users);
 
-      const welcome1 = `Welcome to Happy Office for communication and learning.
+      await sendTelegramMessage(
+        chatId,
+        `Welcome to Happy Office for communication and learning.
 
-Elvy will be with you shortly.`;
+Elvy will be with you shortly.`
+      );
 
-      const welcome2 = isFounder
-        ? `Founder connection is ready.
-
-Elvy can now help you test the live Happy Office system.`
-        : `Hello again.
+      await sendTelegramMessage(
+        chatId,
+        `Hello again.
 
 I’m Elvy, a calm communication companion from Happy Office.
 
-You can send a short message whenever you feel ready.`;
-
-      await sendTelegramMessage(chatId, welcome1);
-      await sendTelegramMessage(chatId, welcome2);
-
-      await saveTelegramMessage(chatId, "assistant", welcome1);
-      await saveTelegramMessage(chatId, "assistant", welcome2);
+You can send a short message whenever you feel ready.`
+      );
 
       return NextResponse.json({ ok: true });
     }
 
     if (user.status !== "Active") {
-      const waitingReply =
-        "Your request is received. Please wait for activation from the Happy Office team.";
-
-      await sendTelegramMessage(chatId, waitingReply);
-      await saveTelegramMessage(chatId, "assistant", waitingReply);
-
+      await sendTelegramMessage(
+        chatId,
+        "Your request is received. Please wait for activation from the Happy Office team."
+      );
       return NextResponse.json({ ok: true });
     }
 
-    if (!isFounder && user.repliesUsed >= user.repliesLimit) {
-      if (user.paymentNoticeSent) {
-        return NextResponse.json({ ok: true });
-      }
+if (user.repliesUsed >= user.repliesLimit) {
+      const paymentLinksTextCheck = buildPaymentLinksText(user);
+      const currentPaymentNoticeKey = paymentLinksTextCheck || "NO_PAYMENT_LINKS";
+
+if (
+  user.paymentNoticeSent &&
+  (user as any).lastPaymentNoticeKey === currentPaymentNoticeKey
+) {
+  user.paymentNoticeSent = false;
+}
 
       const founderSettings = readFounderSettings();
-
-      let endReply = "";
 
       if (founderSettings.automaticPaymentOpen) {
         const paymentLinksText = buildPaymentLinksText(user);
 
         if (paymentLinksText) {
-          endReply = `To continue your conversation with Elvy, please get a Happy Office ticket using one of the links below.
+          await sendTelegramMessage(
+            chatId,
+            `To continue your conversation with Elvy, please get a Happy Office ticket using one of the links below.
 
-${paymentLinksText}`;
+${paymentLinksText}`
+          );
         } else {
-          endReply = `To continue your conversation with Elvy, please get a Happy Office ticket.
+          await sendTelegramMessage(
+            chatId,
+            `To continue your conversation with Elvy, please get a Happy Office ticket.
 
-Payment links will be available soon.`;
+Payment links will be available soon.`
+          );
         }
       } else {
-        endReply = `As Elvy, I am so sorry that this conversation has come to an end.
+        await sendTelegramMessage(
+          chatId,
+          `As Elvy, I am so sorry that this conversation has come to an end.
 
 I’m truly sorry that I cannot reply to your last message right now.
 
@@ -984,15 +720,13 @@ Ticket activation is not available at the moment.
 
 If you need help, you can contact Happy Office using your personal code.
 
-Thank you for being part of Happy Office.`;
+Thank you for being part of Happy Office.`
+        );
       }
 
-      await sendTelegramMessage(chatId, endReply);
-      await saveTelegramMessage(chatId, "assistant", endReply);
-
-      user.paymentNoticeSent = true;
-      await saveUsers(users);
-
+user.paymentNoticeSent = true;
+(user as any).lastPaymentNoticeKey = currentPaymentNoticeKey;
+saveUsers(users);
       return NextResponse.json({ ok: true });
     }
 
@@ -1001,12 +735,7 @@ Thank you for being part of Happy Office.`;
     let wasAutoCorrected = false;
 
     if (replyScore < 70) {
-      const correctedReply = await getCorrectedElvyReply(
-        user,
-        text,
-        reply,
-        isFounder
-      );
+      const correctedReply = await getCorrectedElvyReply(user, text, reply, isFounder);
       const correctedScore = scoreElvyReply(text, correctedReply);
 
       if (correctedScore >= replyScore) {
@@ -1028,10 +757,7 @@ Thank you for being part of Happy Office.`;
 
     updateUserMemory(user, text, reply, replyScore, wasAutoCorrected);
 
-    await saveUsers(users);
-
-    await saveTelegramMessage(chatId, "user", text);
-    await saveTelegramMessage(chatId, "assistant", reply);
+    saveUsers(users);
 
     await sendTelegramMessage(chatId, reply);
 

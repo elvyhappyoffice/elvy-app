@@ -44,7 +44,7 @@ const DAILY_USERS_KEY = "dailySupportUsers";
 const TALK_TOTAL_FREE_USED_KEY = "talk_to_elvy_total_free_used";
 const TALK_SETTINGS_KEY = "talk_to_elvy_settings";
 
-const MAX_REPLIES_PER_USER = 800;
+const MAX_REPLIES_PER_USER = 2000;
 
 const DEFAULT_ADMINS: AdminControl[] = [
   {
