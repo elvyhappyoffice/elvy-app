@@ -334,7 +334,7 @@ export default function DailySupportPage() {
 
         return currentUsers;
       });
-    }, 10000);
+    }, 1000);
 
     return () => window.clearInterval(interval);
   }, [storageReady]);
@@ -1059,8 +1059,8 @@ export default function DailySupportPage() {
                 </thead>
 
                 <tbody>
-                  {users.map((u) => (
-                    <Fragment key={u.code}>
+                  {users.map((u, index) => (
+                    <Fragment key={`${u.code}-${index}`}>
                       <tr className={`border-b ${rowColor(u.status)}`}>
                         <td className="p-3 font-bold">{u.code}</td>
                         <td className="p-3 font-bold">{u.setupAccessNumber || "Not sent"}</td>
