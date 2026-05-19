@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
+import { supabase } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 
@@ -59,6 +60,91 @@ function saveUsers(users: SupportUser[]) {
   const dir = path.dirname(DATA_FILE);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(DATA_FILE, JSON.stringify(users, null, 2));
+}
+
+function mapSupabaseUser(user: any): SupportUser {
+  return {
+    code: user.code || "",
+    name: user.name || "Telegram Visitor",
+    ageGroup: user.age_group || "18–30",
+    helpType: user.help_type || "General support",
+    contactMethod: user.contact_method || "Telegram",
+    contactValue: user.contact_value || "",
+    status: user.status || "Pending",
+    repliesLimit: Number(user.replies_limit || 0),
+    repliesUsed: Number(user.replies_used || 0),
+    adminMessages: user.admin_messages || [],
+    userMessages: user.user_messages || [],
+    telegramChatId: user.telegram_chat_id || "",
+    memory: user.memory || {},
+    paymentNoticeSent: Boolean(user.payment_notice_sent),
+    paid: Boolean(user.paid),
+    paymentStatus: user.payment_status || "Unpaid",
+    paymentMethod: user.payment_method || undefined,
+    paymentReference: user.payment_reference || "",
+    paidAt: user.paid_at || "",
+  };
+}
+
+function mapUserToSupabase(user: SupportUser) {
+  return {
+    code: user.code || "",
+    name: user.name || "Telegram Visitor",
+    age_group: user.ageGroup || "18–30",
+    help_type: user.helpType || "General support",
+    contact_method: user.contactMethod || "Telegram",
+    contact_value: user.contactValue || "",
+    status: user.status || "Pending",
+    replies_limit: Number(user.repliesLimit || 0),
+    replies_used: Number(user.repliesUsed || 0),
+    admin_messages: user.adminMessages || [],
+    user_messages: user.userMessages || [],
+    telegram_chat_id: user.telegramChatId || "",
+    memory: user.memory || {},
+    payment_notice_sent: Boolean(user.paymentNoticeSent),
+    paid: Boolean(user.paid),
+    payment_status: user.paymentStatus || "Unpaid",
+    payment_method: user.paymentMethod || "",
+    payment_reference: user.paymentReference || "",
+    paid_at: user.paidAt || "",
+  };
+}
+
+async function loadUsers(): Promise<SupportUser[]> {
+  if (!process.env.VERCEL) {
+    return readUsers();
+  }
+
+  const { data, error } = await supabase
+    .from("daily_support_users")
+    .select("*");
+
+  if (error) {
+    console.error("Supabase payment start load error:", error);
+    return [];
+  }
+
+  return (data || []).map(mapSupabaseUser);
+}
+
+async function persistUsers(users: SupportUser[]) {
+  if (!process.env.VERCEL) {
+    await persistUsers(users);
+    return;
+  }
+
+  if (users.length === 0) return;
+
+  const supabaseUsers = users.map(mapUserToSupabase);
+
+  const { error } = await supabase
+    .from("daily_support_users")
+    .upsert(supabaseUsers, { onConflict: "code" });
+
+  if (error) {
+    console.error("Supabase payment start save error:", error);
+    throw error;
+  }
 }
 
 // === Founder Payment Setting Helper (NEW) ===
@@ -456,7 +542,7 @@ export async function POST(req: NextRequest) {
       ? String(message.from.first_name)
       : "Telegram Visitor";
 
-    const users = readUsers();
+    const users = await loadUsers();
 
     let user = users.find((u) => u.telegramChatId === chatId);
 
@@ -474,7 +560,7 @@ export async function POST(req: NextRequest) {
           user.status = "In Chat";
         }
 
-        saveUsers(users);
+        await persistUsers(users);
 
         await sendTelegramMessage(
           chatId,
@@ -506,7 +592,7 @@ export async function POST(req: NextRequest) {
       };
 
       users.push(visitor);
-      saveUsers(users);
+      await persistUsers(users);
 
       await sendTelegramMessage(
         chatId,
@@ -592,7 +678,7 @@ Thank you for being part of Happy Office.`
   }
 
   user.paymentNoticeSent = true;
-  saveUsers(users);
+  await persistUsers(users);
 
   return NextResponse.json({ ok: true });
 }
@@ -624,7 +710,7 @@ Thank you for being part of Happy Office.`
 
     updateUserMemory(user, text, reply, replyScore, wasAutoCorrected);
 
-    saveUsers(users);
+    await persistUsers(users);
 
     await sendTelegramMessage(chatId, reply);
 

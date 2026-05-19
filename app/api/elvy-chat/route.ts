@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
+import { supabase } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 
@@ -150,6 +151,93 @@ function findUserByCode(users: any[], code: string) {
   );
 }
 
+function mapSupabaseUser(user: any) {
+  return {
+    code: user.code || "",
+    name: user.name || "",
+    ageGroup: user.age_group || "18–30",
+    helpType: user.help_type || "General support",
+    contactMethod: user.contact_method || "Mobile",
+    contactValue: user.contact_value || "",
+    status: user.status || "Pending",
+    repliesLimit: Number(user.replies_limit || 0),
+    repliesUsed: Number(user.replies_used || 0),
+    adminMessages: user.admin_messages || [],
+    userMessages: user.user_messages || [],
+    telegramChatId: user.telegram_chat_id || "",
+    memory: user.memory || {},
+    paymentNoticeSent: Boolean(user.payment_notice_sent),
+    paid: Boolean(user.paid),
+    paymentStatus: user.payment_status || "Unpaid",
+    paymentMethod: user.payment_method || "",
+    paymentReference: user.payment_reference || "",
+    paidAt: user.paid_at || "",
+    lastMobileReplyAt: user.last_mobile_reply_at || "",
+  };
+}
+
+function mapUserToSupabase(user: any) {
+  return {
+    code: user.code || "",
+    name: user.name || "",
+    age_group: user.ageGroup || "18–30",
+    help_type: user.helpType || "General support",
+    contact_method: user.contactMethod || "Mobile",
+    contact_value: user.contactValue || "",
+    status: user.status || "Pending",
+    replies_limit: Number(user.repliesLimit || 0),
+    replies_used: Number(user.repliesUsed || 0),
+    admin_messages: user.adminMessages || [],
+    user_messages: user.userMessages || [],
+    telegram_chat_id: user.telegramChatId || "",
+    memory: user.memory || {},
+    payment_notice_sent: Boolean(user.paymentNoticeSent),
+    paid: Boolean(user.paid),
+    payment_status: user.paymentStatus || "Unpaid",
+    payment_method: user.paymentMethod || "",
+    payment_reference: user.paymentReference || "",
+    paid_at: user.paidAt || "",
+    last_mobile_reply_at: user.lastMobileReplyAt || "",
+  };
+}
+
+async function loadUsers() {
+  if (!process.env.VERCEL) {
+    return readUsers();
+  }
+
+  const { data, error } = await supabase
+    .from("daily_support_users")
+    .select("*");
+
+  if (error) {
+    console.error("Elvy chat Supabase load error:", error);
+    return [];
+  }
+
+  return (data || []).map(mapSupabaseUser);
+}
+
+async function persistUsers(users: any[]) {
+  if (!process.env.VERCEL) {
+    saveUsers(users);
+    return;
+  }
+
+  if (users.length === 0) return;
+
+  const supabaseUsers = users.map(mapUserToSupabase);
+
+  const { error } = await supabase
+    .from("daily_support_users")
+    .upsert(supabaseUsers, { onConflict: "code" });
+
+  if (error) {
+    console.error("Elvy chat Supabase save error:", error);
+    throw error;
+  }
+}
+
 export async function POST(req: Request) {
   try {
     if (!AI_ACTIVE) {
@@ -191,7 +279,7 @@ export async function POST(req: Request) {
     let repliesLeftBefore = 0;
 
     if (code) {
-      users = readUsers();
+      users = await loadUsers();
       activeUser = findUserByCode(users, code);
 
       if (!activeUser) {
@@ -273,7 +361,7 @@ export async function POST(req: Request) {
         };
       });
 
-      saveUsers(updatedUsers);
+      await persistUsers(updatedUsers);
     }
 
     return NextResponse.json({

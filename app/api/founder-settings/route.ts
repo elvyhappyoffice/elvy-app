@@ -39,6 +39,11 @@ function saveSettings(settings: FounderSettings) {
 }
 
 export async function GET() {
+  if (!process.env.VERCEL) {
+    const settings = readSettings();
+    return NextResponse.json({ ok: true, settings });
+  }
+
   try {
     const { data, error } = await supabase
       .from("founder_settings")
@@ -46,20 +51,50 @@ export async function GET() {
       .eq("id", 1)
       .maybeSingle();
 
-    if (!error && data) {
-      return NextResponse.json({
-        ok: true,
-        settings: {
-          automaticPaymentOpen: Boolean(data.automatic_payment_open),
+    if (error) {
+      console.error("Founder settings Supabase GET error:", error);
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Could not load founder settings from Supabase.",
+          details: error.message,
         },
-      });
+        { status: 500 }
+      );
     }
-  } catch (error) {
-    console.log("Supabase founder settings GET fallback:", error);
-  }
 
-  const settings = readSettings();
-  return NextResponse.json({ ok: true, settings });
+    if (!data) {
+      const { error: insertError } = await supabase
+        .from("founder_settings")
+        .upsert({
+          id: 1,
+          automatic_payment_open: DEFAULT_SETTINGS.automaticPaymentOpen,
+        });
+
+      if (insertError) {
+        console.error("Founder settings Supabase default save error:", insertError);
+      }
+
+      return NextResponse.json({ ok: true, settings: DEFAULT_SETTINGS });
+    }
+
+    return NextResponse.json({
+      ok: true,
+      settings: {
+        automaticPaymentOpen: Boolean(data.automatic_payment_open),
+      },
+    });
+  } catch (error: any) {
+    console.error("Founder settings Supabase GET failed:", error);
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "Could not load founder settings.",
+        details: error?.message || String(error),
+      },
+      { status: 500 }
+    );
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -70,12 +105,11 @@ export async function POST(req: NextRequest) {
       automaticPaymentOpen: Boolean(body.automaticPaymentOpen),
     };
 
-    // Local JSON only outside Vercel
     if (!process.env.VERCEL) {
       saveSettings(settings);
+      return NextResponse.json({ ok: true, settings });
     }
 
-    // Supabase save
     const { error } = await supabase
       .from("founder_settings")
       .upsert({
@@ -85,12 +119,24 @@ export async function POST(req: NextRequest) {
 
     if (error) {
       console.error("Founder settings Supabase save error:", error);
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Could not update founder settings in Supabase.",
+          details: error.message,
+        },
+        { status: 500 }
+      );
     }
 
     return NextResponse.json({ ok: true, settings });
-  } catch {
+  } catch (error: any) {
     return NextResponse.json(
-      { ok: false, error: "Could not update founder settings." },
+      {
+        ok: false,
+        error: "Could not update founder settings.",
+        details: error?.message || String(error),
+      },
       { status: 500 }
     );
   }

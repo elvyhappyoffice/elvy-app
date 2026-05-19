@@ -44,6 +44,13 @@ function saveSettings(settings: PaymentSettings) {
 }
 
 export async function GET() {
+  if (!process.env.VERCEL) {
+    return NextResponse.json({
+      ok: true,
+      settings: readSettings(),
+    });
+  }
+
   try {
     const { data, error } = await supabase
       .from("payment_settings")
@@ -51,25 +58,47 @@ export async function GET() {
       .eq("id", 1)
       .maybeSingle();
 
-    if (!error && data) {
+    if (error) {
+      console.error("Supabase payment settings GET error:", error);
+
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Supabase payment settings GET failed.",
+          details: error.message,
+        },
+        { status: 500 }
+      );
+    }
+
+    if (!data) {
       return NextResponse.json({
         ok: true,
-        settings: {
-          paypalActive: Boolean(data.paypal_active),
-          paypalLink: data.paypal_link || "",
-          skrillActive: Boolean(data.skrill_active),
-          skrillLink: data.skrill_link || "",
-        },
+        settings: DEFAULT_SETTINGS,
       });
     }
-  } catch (error) {
-    console.log("Supabase payment settings GET fallback:", error);
-  }
 
-  return NextResponse.json({
-    ok: true,
-    settings: readSettings(),
-  });
+    return NextResponse.json({
+      ok: true,
+      settings: {
+        paypalActive: Boolean(data.paypal_active),
+        paypalLink: data.paypal_link || "",
+        skrillActive: Boolean(data.skrill_active),
+        skrillLink: data.skrill_link || "",
+      },
+    });
+  } catch (error: any) {
+    console.error("Supabase payment settings connection failed:", error);
+
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "Supabase payment settings connection failed.",
+        details: error?.message || String(error),
+      },
+      { status: 500 }
+    );
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -86,6 +115,7 @@ export async function POST(req: NextRequest) {
     // Local JSON only outside Vercel
     if (!process.env.VERCEL) {
       saveSettings(settings);
+      return NextResponse.json({ ok: true, settings });
     }
 
     // Supabase save

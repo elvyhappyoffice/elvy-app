@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
+import { supabase } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 
@@ -15,6 +16,35 @@ function readUsers() {
   }
 }
 
+function mapSupabaseUser(user: any) {
+  return {
+    code: user.code || "",
+    name: user.name || "",
+    status: user.status || "Pending",
+    repliesLimit: Number(user.replies_limit || 0),
+    repliesUsed: Number(user.replies_used || 0),
+    paid: Boolean(user.paid),
+    paymentStatus: user.payment_status || "Unpaid",
+  };
+}
+
+async function loadUsers() {
+  if (!process.env.VERCEL) {
+    return readUsers();
+  }
+
+  const { data, error } = await supabase
+    .from("daily_support_users")
+    .select("*");
+
+  if (error) {
+    console.error("Supabase activate-code load error:", error);
+    return [];
+  }
+
+  return (data || []).map(mapSupabaseUser);
+}
+
 export async function POST(req: NextRequest) {
   const body = await req.json();
   const code = String(body.code || "").trim();
@@ -26,7 +56,7 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  const users = readUsers();
+  const users = await loadUsers();
 
   const user = users.find(
     (u: any) => String(u.code || "").trim().toLowerCase() === code.toLowerCase()
