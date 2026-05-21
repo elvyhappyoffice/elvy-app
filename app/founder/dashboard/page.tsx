@@ -105,14 +105,14 @@ export default function FounderDashboardPage() {
   const [aiActive, setAiActive] = useState(false);
   const [confirmAI, setConfirmAI] = useState(false);
   const [aiBudget, setAiBudget] = useState(5);
-  const [inputTokens, setInputTokens] = useState(2050);
+  const [inputTokens, setInputTokens] = useState(1000);
   const [outputTokens, setOutputTokens] = useState(90);
   const [inputTokenPrice, setInputTokenPrice] = useState(0.0000004);
   const [outputTokenPrice, setOutputTokenPrice] = useState(0.0000016);
   const [freeTalkReplies, setFreeTalkReplies] = useState(100);
 
   const [ticketPrice, setTicketPrice] = useState(4);
-  const [repliesPerTicket, setRepliesPerTicket] = useState(500);
+  const [repliesPerTicket, setRepliesPerTicket] = useState(2000);
 
   const [admins, setAdmins] = useState<AdminControl[]>(DEFAULT_ADMINS);
   const [dailyUsers, setDailyUsers] = useState<DailySupportUser[]>([]);
@@ -198,13 +198,13 @@ fetch("/api/payment-settings")
     if (savedAI) {
       setAiActive(savedAI.aiActive ?? false);
       setAiBudget(savedAI.aiBudget ?? 5);
-      setInputTokens(savedAI.inputTokens ?? 2050);
+      setInputTokens(savedAI.inputTokens ?? 1000);
       setOutputTokens(savedAI.outputTokens ?? 90);
       setInputTokenPrice(savedAI.inputTokenPrice ?? 0.0000004);
       setOutputTokenPrice(savedAI.outputTokenPrice ?? 0.0000016);
       setFreeTalkReplies(savedAI.freeTalkReplies ?? 100);
       setTicketPrice(savedAI.ticketPrice ?? 4);
-      setRepliesPerTicket(clampNumber(Number(savedAI.repliesPerTicket ?? 500), 1, MAX_REPLIES_PER_USER));
+      setRepliesPerTicket(clampNumber(Number(savedAI.repliesPerTicket ?? 2000), 1, MAX_REPLIES_PER_USER));
     }
 
     setAdmins(savedAdmins);
@@ -452,7 +452,7 @@ async function savePaymentSettings() {
 
     const value = prompt(
       `Enter total replies for ${currentUser.name}. Maximum is ${MAX_REPLIES_PER_USER}.`,
-      String(currentUser.repliesLimit || repliesPerTicket || 500)
+      String(currentUser.repliesLimit || repliesPerTicket || 2000)
     );
 
     if (value === null) return;
@@ -482,7 +482,7 @@ async function savePaymentSettings() {
   async function activateUser(code: string) {
     const updatedUsers = updateDailyUserLocally(code, (user) => {
       const limit = clampNumber(
-        Number(user.repliesLimit || repliesPerTicket || 500),
+        Number(user.repliesLimit || repliesPerTicket || 2000),
         1,
         MAX_REPLIES_PER_USER
       );

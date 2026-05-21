@@ -5,11 +5,14 @@
     "contactMethod": "Telegram",
     "contactValue": "@saidrighton",
     "status": "Active",
-    "repliesLimit": 4,
-    "repliesUsed": 0,
+    "repliesLimit": 7,
+    "repliesUsed": 7,
     "adminMessages": [
       "Welcome to Happy Office for communication and learning.\n\nElvy will be with you shortly.",
-      "Hello again.\n\nI’m Elvy, a calm communication companion from Happy Office.\n\nYou can send a short message whenever you feel ready."
+      "Hello again.\n\nI’m Elvy, a calm communication companion from Happy Office.\n\nYou can send a short message whenever you feel ready.",
+      "Hello Said.\n\nI am Elvy.\n\nYour support is now active. This space is calm, simple, and here to help you with clear and meaningful communication.\n\nPlease send short and focused messages so I can understand you clearly.",
+      "Hello Said, this is Happy Office.\n\nYour access number is: 4151\n\nUse this full code to open private chat with the Happy Office team:\n\nVISITOR-1779144147453-4151\n\nAfter opening the private chat, the team will guide you through activation.",
+      "Hello Said.\n\nI am Elvy.\n\nYour support is now active. This space is calm, simple, and here to help you with clear and meaningful communication.\n\nPlease send short and focused messages so I can understand you clearly."
     ],
     "userMessages": [],
     "telegramChatId": "7517285147",
@@ -21,6 +24,30 @@
     },
     "paymentNoticeSent": false,
     "paid": false,
-    "paymentStatus": "Unpaid"
+    "paymentStatus": "Unpaid",
+    "contactCost": 0.02,
+    "setupAccessNumber": "4151",
+    "lastMobileReplyAt": "2026-05-21T12:56:03.317Z"
+  },
+  {
+    "code": "FREE-1779389678365-mfm3mf",
+    "name": "Mobile Visitor",
+    "ageGroup": "18–30",
+    "helpType": "Free trial",
+    "contactMethod": "Mobile",
+    "contactValue": "FREE-1779389678365-mfm3mf",
+    "status": "Active",
+    "repliesLimit": 3,
+    "repliesUsed": 3,
+    "adminMessages": [],
+    "userMessages": [],
+    "memory": {
+      "freeTrial": true,
+      "firstContactAt": "2026-05-21T22:08:53.931Z"
+    },
+    "paymentNoticeSent": false,
+    "paid": false,
+    "paymentStatus": "Unpaid",
+    "lastMobileReplyAt": "2026-05-21T22:10:15.622Z"
   }
 ]

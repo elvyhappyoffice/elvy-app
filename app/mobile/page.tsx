@@ -8,6 +8,14 @@ type Message = {
   text: string;
 };
 
+const FREE_REPLIES_LIMIT = 3;
+const FREE_REPLIES_USED_KEY = "elvy_mobile_free_replies_used";
+const FREE_TRIAL_CODE_KEY = "elvy_mobile_free_trial_code";
+
+function createFreeTrialCode() {
+  return `FREE-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 export default function MobileElvyPage() {
   const router = useRouter();
 
@@ -23,6 +31,7 @@ export default function MobileElvyPage() {
   const [activationMessage, setActivationMessage] = useState("");
 
   const [freeRepliesUsed, setFreeRepliesUsed] = useState(0);
+  const [freeTrialCode, setFreeTrialCode] = useState("");
   const [showTicketInfo, setShowTicketInfo] = useState(false);
 
   const [isActivated, setIsActivated] = useState(false);
@@ -44,6 +53,20 @@ export default function MobileElvyPage() {
       text: "Hello. My name is Elvy. I am a communication companion. How can I help you?",
     },
   ]);
+
+  useEffect(() => {
+    const savedUsed = Number(localStorage.getItem(FREE_REPLIES_USED_KEY) || "0");
+    setFreeRepliesUsed(Number.isFinite(savedUsed) ? savedUsed : 0);
+
+    let savedCode = localStorage.getItem(FREE_TRIAL_CODE_KEY) || "";
+
+    if (!savedCode) {
+      savedCode = createFreeTrialCode();
+      localStorage.setItem(FREE_TRIAL_CODE_KEY, savedCode);
+    }
+
+    setFreeTrialCode(savedCode);
+  }, []);
 
   useEffect(() => {
     async function loadPaymentSettings() {
@@ -153,8 +176,8 @@ export default function MobileElvyPage() {
     setMessages((prev) => [...prev, { sender: "user", text }]);
     setInput("");
 
-    const freeModeAllowed = freeRepliesUsed < 3;
     const paidModeAllowed = isActivated && repliesLeft > 0;
+    const freeModeAllowed = !paidModeAllowed && freeRepliesUsed < FREE_REPLIES_LIMIT;
 
     if (!freeModeAllowed && !paidModeAllowed) {
       setShowTicketInfo(true);
@@ -173,8 +196,9 @@ export default function MobileElvyPage() {
     if (freeModeAllowed) {
       const nextUsed = freeRepliesUsed + 1;
       setFreeRepliesUsed(nextUsed);
+      localStorage.setItem(FREE_REPLIES_USED_KEY, String(nextUsed));
 
-      if (nextUsed >= 3 && !isActivated) {
+      if (nextUsed >= FREE_REPLIES_LIMIT && !isActivated) {
         setShowTicketInfo(true);
       }
     } else if (paidModeAllowed) {
@@ -206,6 +230,8 @@ export default function MobileElvyPage() {
         body: JSON.stringify({
           message: text,
           code: codeToSend,
+          freeTrialCode,
+          freeTrialMode: freeModeAllowed,
           recentMessages: messages.slice(-6),
         }),
       });
@@ -379,13 +405,17 @@ export default function MobileElvyPage() {
 
               {showTicketInfo && (
                 <div className="rounded-2xl bg-[#f7eadb] p-3 text-sm text-[#3b2418]">
-                  <p className="font-semibold">Elvy Ticket</p>
-                  <p className="mt-1">One message ticket gives you 2000 text credits.</p>
-                  <p className="mt-1">Voice access will be available later as a separate ticket.</p>
-                  <p className="mt-1">After payment, enter your activation code to unlock Elvy.</p>
-
-                  {paymentOpen ? (
+                  <p className="font-semibold">
+  To continue, please activate an Elvy Ticket.
+</p>
+                  {paymentOpen && ((paypalActive && paypalLink) || (skrillActive && skrillLink)) ? (
                     <>
+                      <p className="mt-1">Ticket price: $4</p>
+                      <p className="mt-1">Balance: 2000 text credits</p>
+                      <p className="mt-1">Validity: no time limit</p>
+                      <p className="mt-1">Voice access will be available later as a separate ticket.</p>
+                      <p className="mt-1">After payment, enter your activation code to unlock Elvy.</p>
+
                       {paypalActive && paypalLink && (
                         <button
                           onClick={() => window.open(paypalLink, "_blank")}
@@ -404,15 +434,6 @@ export default function MobileElvyPage() {
                         >
                           Pay with Skrill
                         </button>
-                      )}
-
-                      {(!paypalActive || !paypalLink) && (!skrillActive || !skrillLink) && (
-                        <div className="mt-3 rounded-xl bg-[#f3e5d7] p-3 text-xs font-medium text-[#5b4332]">
-                          Ticket activation is not available at the moment.
-                          <br />
-                          <br />
-                          If you need help, you can contact Happy Office using your personal code.
-                        </div>
                       )}
                     </>
                   ) : (
