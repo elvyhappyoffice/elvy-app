@@ -713,9 +713,9 @@ setActivationMessage("Elvy is activated.");
 
         {chatOpen && (
           <div
-            className="absolute left-0 right-0 bottom-0 z-50 flex flex-col rounded-t-[38px] bg-[#efe7dc]/95 backdrop-blur-md shadow-2xl border border-[#d9c4ab]"
+            className="absolute left-5 right-5 bottom-5 z-50 flex flex-col overflow-hidden rounded-[18px] border border-[#d8b98f] bg-[#fff4e5]/92 shadow-[0_18px_40px_rgba(72,45,25,0.28)] backdrop-blur-md"
             style={{
-              top: "48%",
+              top: "45%",
             }}
           >
             <div className="mb-2 flex items-center justify-between">
