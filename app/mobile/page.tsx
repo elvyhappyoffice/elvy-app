@@ -749,7 +749,7 @@ setActivationMessage("Elvy is activated.");
               </div>
             </div>
 
-            className="mb-3 flex-1 space-y-2 overflow-y-auto rounded-none border border-[#e2c49c] bg-[#fff8ef]/70 p-3"
+            <div className="mb-3 flex-1 space-y-2 overflow-y-auto rounded-none border border-[#e2c49c] bg-[#fff8ef]/70 p-3">
               {messages.map((msg, index) => (
                 <div
                   key={index}
@@ -859,14 +859,14 @@ setActivationMessage("Elvy is activated.");
                 }}
                 type="text"
                 placeholder={isSending ? "Elvy is replying..." : "Write..."}
-                className="shrink-0 rounded-none border border-[#3d2417] bg-[#4a2d1f] px-5 py-4 text-[15px] font-extrabold text-white shadow-md transition-all active:scale-[0.98]"
+                className="min-w-0 flex-[1.4] rounded-none border border-[#d8b98f] bg-white px-5 py-4 text-[15px] font-medium text-[#2b1a12] shadow-sm outline-none placeholder:text-[#9a8d80]"
               />
 
               <button
                 type="button"
                 onClick={sendMessage}
                 disabled={isSending}
-                className="shrink-0 rounded-[22px] bg-gradient-to-b from-[#5d3824] to-[#3d2417] px-5 py-4 text-[15px] font-extrabold text-white shadow-[0_10px_18px_rgba(61,36,23,0.28)] transition-all active:scale-[0.98]"
+                className="shrink-0 rounded-none border border-[#3d2417] bg-[#4a2d1f] px-5 py-4 text-[15px] font-extrabold text-white shadow-md transition-all active:scale-[0.98]"
                 style={{
                   backgroundColor: isSending ? "#bfae9d" : "#4a2d1f",
                   color: "#ffffff",
