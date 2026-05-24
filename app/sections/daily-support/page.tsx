@@ -505,14 +505,43 @@ export default function DailySupportPage() {
 
   async function sendSetupMessage(code: string) {
     const user = users.find((u) => u.code === code);
+
     if (!user) return;
 
-    if (user.contactMethod === "Telegram" && !user.telegramChatId) {
-      alert("This Telegram user is not synced yet. Ask the user to start the bot, then click Sync Telegram Users.");
+    const setupNumber = generateSetupNumber();
+
+    // MOBILE USERS: prepare the activation code inside the user record.
+    // No Telegram message is sent.
+    if (user.contactMethod === "Mobile") {
+      const mobileMessage =
+        `Hello ${user.name}.\n\n` +
+        `Your Elvy activation code is:\n\n` +
+        `${user.code}-${setupNumber}\n\n` +
+        `Copy and paste this code into the activation box inside the app.`;
+
+      updateUser(code, {
+        status: "Setup Sent",
+        setupAccessNumber: setupNumber,
+        adminMessages: [
+          ...(user.adminMessages || []),
+          mobileMessage,
+        ],
+        contactCost: user.contactCost,
+      });
+
+      alert("Mobile activation code prepared successfully.");
+
       return;
     }
 
-    const setupNumber = generateSetupNumber();
+    // TELEGRAM USERS: keep the old Telegram sending flow.
+    if (user.contactMethod === "Telegram" && !user.telegramChatId) {
+      alert(
+        "This Telegram user is not synced yet. Ask the user to start the bot, then click Sync Telegram Users."
+      );
+
+      return;
+    }
 
     const setupMessage =
       `Hello ${user.name}, this is Happy Office.\n\n` +
@@ -522,24 +551,33 @@ export default function DailySupportPage() {
       `After opening the private chat, the team will guide you through activation.`;
 
     try {
-      const data = await sendTelegramMessage(setupMessage, user.telegramChatId);
+      const data = await sendTelegramMessage(
+        setupMessage,
+        user.telegramChatId
+      );
 
       if (!data.success) {
         alert("Telegram failed. Check token, chat ID, or route.");
+
         console.log(data);
+
         return;
       }
 
       updateUser(code, {
         status: "Setup Sent",
         setupAccessNumber: setupNumber,
-        adminMessages: [...user.adminMessages, setupMessage],
+        adminMessages: [
+          ...(user.adminMessages || []),
+          setupMessage,
+        ],
         contactCost: user.contactCost + 0.01,
       });
 
       alert("Access number sent successfully.");
     } catch (error) {
       console.log(error);
+
       alert("Telegram request failed.");
     }
   }
@@ -623,43 +661,76 @@ export default function DailySupportPage() {
     setChatInput("");
   }
 
-  async function activateElvy(code: string) {
-    const user = users.find((u) => u.code === code);
-    if (!user) return;
+async function activateElvy(code: string) {
+  const user = users.find((u) => u.code === code);
 
-    if (user.contactMethod === "Telegram" && !user.telegramChatId) {
-      alert("This user must be synced with Telegram before activating Elvy.");
+  if (!user) return;
+
+  const elvyMessage =
+    `Hello ${user.name}.\n\n` +
+    `I am Elvy.\n\n` +
+    `Your support is now active. This space is calm, simple, and here to help you with clear and meaningful communication.\n\n` +
+    `Please send short and focused messages so I can understand you clearly.`;
+
+  // MOBILE USERS
+  if (user.contactMethod === "Mobile") {
+    updateUser(code, {
+      status: "Active",
+      adminMessages: [
+        ...(user.adminMessages || []),
+        elvyMessage,
+      ],
+      contactCost: user.contactCost,
+      memory: user.memory || createEmptyMemory(),
+    });
+
+    alert("Mobile Elvy activated successfully.");
+
+    return;
+  }
+
+  // TELEGRAM USERS
+  if (user.contactMethod === "Telegram" && !user.telegramChatId) {
+    alert(
+      "This user must be synced with Telegram before activating Elvy."
+    );
+
+    return;
+  }
+
+  try {
+    const data = await sendTelegramMessage(
+      elvyMessage,
+      user.telegramChatId
+    );
+
+    if (!data.success) {
+      alert(
+        "Elvy welcome message was not sent. Check Telegram connection."
+      );
+
+      console.log(data);
+
       return;
     }
 
-    const elvyMessage =
-      `Hello ${user.name}.\n\n` +
-      `I am Elvy.\n\n` +
-      `Your support is now active. This space is calm, simple, and here to help you with clear and meaningful communication.\n\n` +
-      `Please send short and focused messages so I can understand you clearly.`;
+    updateUser(code, {
+      status: "Active",
+      adminMessages: [
+        ...(user.adminMessages || []),
+        elvyMessage,
+      ],
+      contactCost: user.contactCost + 0.01,
+      memory: user.memory || createEmptyMemory(),
+    });
 
-    try {
-      const data = await sendTelegramMessage(elvyMessage, user.telegramChatId);
+    alert("Elvy activated and welcome message sent.");
+  } catch (error) {
+    console.log(error);
 
-      if (!data.success) {
-        alert("Elvy welcome message was not sent. Check Telegram connection.");
-        console.log(data);
-        return;
-      }
-
-      updateUser(code, {
-        status: "Active",
-        adminMessages: [...user.adminMessages, elvyMessage],
-        contactCost: user.contactCost + 0.01,
-        memory: user.memory || createEmptyMemory(),
-      });
-
-      alert("Elvy activated and welcome message sent.");
-    } catch (error) {
-      console.log(error);
-      alert("Elvy activation failed.");
-    }
+    alert("Elvy activation failed.");
   }
+}
 
   function canDeleteUser(user: SupportUser) {
     if (user.status !== "Active") return true;

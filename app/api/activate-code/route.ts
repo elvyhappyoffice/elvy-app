@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase";
 export const runtime = "nodejs";
 
 const DATA_FILE = path.join(process.cwd(), "data", "dailySupportUsers.json");
+const ACCOUNTS_FILE = path.join(process.cwd(), "data", "elvyAccounts.json");
 
 function readUsers() {
   try {
@@ -14,6 +15,67 @@ function readUsers() {
   } catch {
     return [];
   }
+}
+
+function readAccounts() {
+  try {
+    if (!fs.existsSync(ACCOUNTS_FILE)) return [];
+    return JSON.parse(fs.readFileSync(ACCOUNTS_FILE, "utf8"));
+  } catch {
+    return [];
+  }
+}
+
+function saveAccounts(accounts: any[]) {
+  const dir = path.dirname(ACCOUNTS_FILE);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(ACCOUNTS_FILE, JSON.stringify(accounts, null, 2));
+}
+
+async function updateAccountTicket(user: any, repliesLeft: number) {
+  if (process.env.VERCEL) {
+    const { error } = await supabase
+      .from("elvy_accounts")
+      .update({
+        credits_left: repliesLeft,
+        ticket_status: "Active",
+        activated_at: new Date().toISOString(),
+      })
+      .eq("user_code", user.code);
+
+    if (error) {
+      console.error(
+        "Supabase activate-code account update error:",
+        error
+      );
+    }
+
+    return;
+  }
+
+  const accounts = readAccounts();
+
+  const updatedAccounts = accounts.map((account: any) => {
+    if (
+      String(account.userCode || "").trim().toLowerCase() !==
+      String(user.code || "").trim().toLowerCase()
+    ) {
+      return account;
+    }
+
+    return {
+      ...account,
+      displayName:
+        account.displayName ||
+        user.name ||
+        account.username,
+      creditsLeft: repliesLeft,
+      ticketStatus: "Active",
+      activatedAt: new Date().toISOString(),
+    };
+  });
+
+  saveAccounts(updatedAccounts);
 }
 
 function mapSupabaseUser(user: any) {
@@ -47,8 +109,11 @@ async function loadUsers() {
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
-  const code = String(body.code || "").trim();
+  const fullCode = String(body.code || "").trim();
 
+const code = fullCode.includes("-")
+  ? fullCode.split("-").slice(0, 2).join("-")
+  : fullCode;
   if (!code) {
     return NextResponse.json({
       success: false,
@@ -91,6 +156,8 @@ export async function POST(req: NextRequest) {
       message: "This ticket has no credits left.",
     });
   }
+
+  await updateAccountTicket(user, repliesLeft);
 
   return NextResponse.json({
     success: true,

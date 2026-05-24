@@ -11,6 +11,7 @@ const openai = new OpenAI({
 });
 
 const DATA_FILE = path.join(process.cwd(), "data", "dailySupportUsers.json");
+const ACCOUNTS_FILE = path.join(process.cwd(), "data", "elvyAccounts.json");
 
 const AI_ACTIVE = true;
 const MAX_USER_CHARS = 500;
@@ -89,6 +90,74 @@ function saveUsers(users: any[]) {
   const dir = path.dirname(DATA_FILE);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(DATA_FILE, JSON.stringify(users, null, 2));
+}
+
+function readAccounts() {
+  try {
+    if (!fs.existsSync(ACCOUNTS_FILE)) return [];
+    return JSON.parse(fs.readFileSync(ACCOUNTS_FILE, "utf8"));
+  } catch {
+    return [];
+  }
+}
+
+function saveAccounts(accounts: any[]) {
+  const dir = path.dirname(ACCOUNTS_FILE);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(ACCOUNTS_FILE, JSON.stringify(accounts, null, 2));
+}
+
+async function updateAccountCredits(
+  userCode: string,
+  creditsLeft: number
+) {
+  if (process.env.VERCEL) {
+    const { error } = await supabase
+      .from("elvy_accounts")
+      .update({
+        credits_left: creditsLeft,
+        ticket_status:
+          creditsLeft > 0 ? "Active" : "Expired",
+      })
+      .eq("user_code", userCode);
+
+    if (error) {
+      console.error(
+        "Supabase account credits sync error:",
+        error
+      );
+    }
+
+    return;
+  }
+
+  const accounts = readAccounts();
+
+  const updatedAccounts = accounts.map((account: any) => {
+    if (
+      String(account.userCode || "")
+        .trim()
+        .toLowerCase() !==
+      String(userCode || "")
+        .trim()
+        .toLowerCase()
+    ) {
+      return account;
+    }
+
+    return {
+      ...account,
+      creditsLeft,
+      ticketStatus:
+        creditsLeft > 0
+          ? "Active"
+          : account.ticketStatus || "Active",
+      lastCreditUpdateAt:
+        new Date().toISOString(),
+    };
+  });
+
+  saveAccounts(updatedAccounts);
 }
 
 function findUserByCode(users: any[], code: string) {
@@ -291,17 +360,25 @@ export async function POST(req: Request) {
         activeUser.paymentStatus === "Paid" ||
         activeUser.paid === true;
 
-      if (!isActive) {
+      const repliesLimit = Number(activeUser.repliesLimit || 0);
+      const repliesUsed = Number(activeUser.repliesUsed || 0);
+      repliesLeftBefore = Math.max(repliesLimit - repliesUsed, 0);
+
+      const freeTrialAllowed =
+        freeTrialMode &&
+        activeUser.contactMethod === "Mobile" &&
+        repliesLimit <= FREE_REPLIES_LIMIT &&
+        repliesUsed < FREE_REPLIES_LIMIT &&
+        activeUser.paid !== true &&
+        activeUser.paymentStatus !== "Paid";
+
+      if (!isActive && !freeTrialAllowed) {
         return NextResponse.json({
           success: false,
           reply: "This code is not active yet.",
           ticketBlocked: true,
         });
       }
-
-      const repliesLimit = Number(activeUser.repliesLimit || 0);
-      const repliesUsed = Number(activeUser.repliesUsed || 0);
-      repliesLeftBefore = Math.max(repliesLimit - repliesUsed, 0);
 
       if (repliesLeftBefore <= 0) {
         const paymentOpen = true;
@@ -362,6 +439,10 @@ export async function POST(req: Request) {
       });
 
       await persistUsers(updatedUsers);
+
+      if (typeof repliesLeft === "number") {
+        await updateAccountCredits(activeCode, repliesLeft);
+      }
     }
 
     return NextResponse.json({

@@ -191,37 +191,6 @@ if (!process.env.VERCEL) {
       }, { status: 500 });
     }
 
-    // ALSO CLEAN elvy_accounts
-    let accountDeleteQuery =
-      supabase.from("elvy_accounts").delete();
-
-    let accountDeleteResult;
-
-    if (codes.length > 0) {
-      accountDeleteResult =
-        await accountDeleteQuery.not(
-          "user_code",
-          "in",
-          `(${codes
-            .map((code: string) => `"${code}"`)
-            .join(",")})`
-        );
-    } else {
-      accountDeleteResult =
-        await accountDeleteQuery.not(
-          "id",
-          "is",
-          null
-        );
-    }
-
-    if (accountDeleteResult.error) {
-      console.error(
-        "Supabase elvy_accounts delete error:",
-        accountDeleteResult.error
-      );
-    }
-
     if (users.length > 0) {
       const supabaseUsers = users.map(mapUserToSupabase);
 

@@ -8,9 +8,19 @@ type Message = {
   text: string;
 };
 
+type ElvyAccount = {
+  username: string;
+  displayName: string;
+  userCode: string;
+  creditsLeft: number;
+  ticketStatus: string;
+};
+
+const ELVY_ACCOUNT_KEY = "elvy_mobile_account";
 const FREE_REPLIES_LIMIT = 3;
 const FREE_REPLIES_USED_KEY = "elvy_mobile_free_replies_used";
 const FREE_TRIAL_CODE_KEY = "elvy_mobile_free_trial_code";
+const SEEN_ADMIN_MESSAGES_KEY = "elvy_seen_admin_messages";
 
 function createFreeTrialCode() {
   return `FREE-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -24,7 +34,15 @@ export default function MobileElvyPage() {
   const [showTerms, setShowTerms] = useState(false);
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
+  const [showAccountForm, setShowAccountForm] = useState(false);
   const [isSending, setIsSending] = useState(false);
+
+  const [accountMode, setAccountMode] = useState<"login" | "register">("register");
+  const [account, setAccount] = useState<ElvyAccount | null>(null);
+  const [accountUsername, setAccountUsername] = useState("");
+  const [accountPassword, setAccountPassword] = useState("");
+  const [accountDisplayName, setAccountDisplayName] = useState("");
+  const [accountMessage, setAccountMessage] = useState("");
 
   const [input, setInput] = useState("");
   const [activationCode, setActivationCode] = useState("");
@@ -53,6 +71,32 @@ export default function MobileElvyPage() {
       text: "Hello. My name is Elvy. I am a communication companion. How can I help you?",
     },
   ]);
+
+  useEffect(() => {
+    try {
+      const savedAccount = localStorage.getItem(ELVY_ACCOUNT_KEY);
+      if (!savedAccount) return;
+
+      const parsed = JSON.parse(savedAccount) as ElvyAccount;
+      if (parsed?.username && parsed?.userCode) {
+        setAccount(parsed);
+        setIsActivated(
+  parsed.ticketStatus === "Active" &&
+  Number(parsed.creditsLeft || 0) > 0
+);
+        setActiveUserCode(parsed.userCode);
+        setRepliesLeft(Number(parsed.creditsLeft || 0));
+        setMessages([
+          {
+            sender: "elvy",
+            text: `Welcome back, ${parsed.displayName || parsed.username}.`,
+          },
+        ]);
+      }
+    } catch {
+      localStorage.removeItem(ELVY_ACCOUNT_KEY);
+    }
+  }, []);
 
   useEffect(() => {
     const savedUsed = Number(localStorage.getItem(FREE_REPLIES_USED_KEY) || "0");
@@ -111,6 +155,67 @@ export default function MobileElvyPage() {
       behavior: "smooth",
     });
   }, [messages, isSending]);
+useEffect(() => {
+  if (!account?.userCode) return;
+
+  const interval = setInterval(async () => {
+    try {
+      const response = await fetch(
+        `/api/user-messages?code=${account.userCode}`,
+        {
+          cache: "no-store",
+        }
+      );
+
+      const data = await response.json();
+
+      if (!data?.success || !Array.isArray(data.messages)) {
+        return;
+      }
+
+      const latestMessage =
+        data.messages[data.messages.length - 1];
+
+      if (!latestMessage) return;
+
+      const seenMessages = JSON.parse(
+        localStorage.getItem(SEEN_ADMIN_MESSAGES_KEY) || "[]"
+      );
+
+      if (seenMessages.includes(latestMessage)) {
+        return;
+      }
+
+      localStorage.setItem(
+        SEEN_ADMIN_MESSAGES_KEY,
+        JSON.stringify([
+          ...seenMessages,
+          latestMessage,
+        ])
+      );
+
+      setMessages((prev) => {
+        const alreadyExists = prev.some(
+          (msg) => msg.text === latestMessage
+        );
+
+        if (alreadyExists) return prev;
+
+        return [
+          ...prev,
+          {
+            sender: "elvy",
+            text: latestMessage,
+          },
+        ];
+      });
+    } catch (error) {
+      console.log(error);
+    }
+  }, 3000);
+
+  return () => clearInterval(interval);
+}, [account]);
 
   function openTalkToElvy() {
     setShowTerms(true);
@@ -121,7 +226,120 @@ export default function MobileElvyPage() {
   function continueToChat() {
     if (!acceptedTerms) return;
     setShowTerms(false);
-    setChatOpen(true);
+
+    if (account) {
+      setChatOpen(true);
+      return;
+    }
+
+    setShowAccountForm(true);
+  }
+
+  async function submitAccount() {
+    const cleanUsername = accountUsername.trim().toLowerCase();
+    const cleanPassword = accountPassword.trim();
+    const cleanDisplayName = accountDisplayName.trim();
+
+    if (!cleanUsername || !cleanPassword) {
+      setAccountMessage("Username and password are required.");
+      return;
+    }
+
+    try {
+      const endpoint =
+        accountMode === "register"
+          ? "/api/account/register"
+          : "/api/account/login";
+
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          username: cleanUsername,
+          password: cleanPassword,
+          displayName: cleanDisplayName || cleanUsername,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!data?.ok || !data?.account) {
+        setAccountMessage(data?.error || "Account request failed.");
+        return;
+      }
+
+      const nextAccount: ElvyAccount = {
+        username: data.account.username,
+        displayName: data.account.displayName || data.account.display_name || cleanUsername,
+        userCode: data.account.userCode || data.account.user_code,
+        creditsLeft: Number(data.account.creditsLeft ?? data.account.credits_left ?? 0),
+        ticketStatus: data.account.ticketStatus || data.account.ticket_status || "Free",
+      };
+
+      localStorage.setItem(ELVY_ACCOUNT_KEY, JSON.stringify(nextAccount));
+if (accountMode === "register") {
+  localStorage.removeItem(FREE_REPLIES_USED_KEY);
+  localStorage.removeItem(FREE_TRIAL_CODE_KEY);
+
+  setFreeRepliesUsed(0);
+
+  const newFreeTrialCode = createFreeTrialCode();
+
+  localStorage.setItem(
+    FREE_TRIAL_CODE_KEY,
+    newFreeTrialCode
+  );
+
+  setFreeTrialCode(newFreeTrialCode);
+}
+
+setAccount(nextAccount);
+
+const activated =
+  nextAccount.ticketStatus === "Active" &&
+  Number(nextAccount.creditsLeft || 0) > 0;
+
+setIsActivated(activated);
+
+setActiveUserCode(
+  activated ? nextAccount.userCode : ""
+);
+
+setRepliesLeft(
+  Number(nextAccount.creditsLeft || 0)
+);
+
+if (accountMode === "register") {
+  setFreeRepliesUsed(0);
+  setShowTicketInfo(false);
+}
+      setShowAccountForm(false);
+      setChatOpen(true);
+      setAccountMessage("");
+      setMessages([
+        {
+          sender: "elvy",
+          text:
+            accountMode === "register"
+              ? `Welcome to Happy Office, ${nextAccount.displayName}.`
+              : `Welcome back, ${nextAccount.displayName}.`,
+        },
+      ]);
+    } catch {
+      setAccountMessage("Account connection failed. Please try again.");
+    }
+  }
+
+  function logoutAccount() {
+    localStorage.removeItem(ELVY_ACCOUNT_KEY);
+    setAccount(null);
+    setIsActivated(false);
+    setActiveUserCode("");
+    setRepliesLeft(0);
+    setChatOpen(false);
+    setShowAccountForm(true);
   }
 
   async function activateCode() {
@@ -151,11 +369,28 @@ export default function MobileElvyPage() {
         return;
       }
 
-      setIsActivated(true);
-      setActiveUserCode(data.user?.code || cleanCode);
-      setRepliesLeft(Number(data.user?.repliesLeft || 0));
-      setShowTicketInfo(false);
-      setActivationMessage("Elvy is activated.");
+setIsActivated(true);
+
+const updatedAccount = {
+  ...(account as ElvyAccount),
+  creditsLeft: Number(data.user?.repliesLeft || 0),
+  ticketStatus: "Active",
+};
+
+setAccount(updatedAccount);
+
+localStorage.setItem(
+  ELVY_ACCOUNT_KEY,
+  JSON.stringify(updatedAccount)
+);
+
+setActiveUserCode(data.user?.code || cleanCode);
+
+setRepliesLeft(Number(data.user?.repliesLeft || 0));
+
+setShowTicketInfo(false);
+
+setActivationMessage("Elvy is activated.");
 
       setMessages((prev) => [
         ...prev,
@@ -230,7 +465,7 @@ export default function MobileElvyPage() {
         body: JSON.stringify({
           message: text,
           code: codeToSend,
-          freeTrialCode,
+          freeTrialCode: account?.userCode || freeTrialCode,
           freeTrialMode: freeModeAllowed,
           recentMessages: messages.slice(-6),
         }),
@@ -288,7 +523,7 @@ export default function MobileElvyPage() {
           className="absolute inset-0 h-full w-full object-cover"
         />
 
-        {!chatOpen && !showTerms && (
+        {!chatOpen && !showTerms && !showAccountForm && (
           <>
             <button
               onClick={openTalkToElvy}
@@ -356,16 +591,138 @@ export default function MobileElvyPage() {
           </div>
         )}
 
-        {chatOpen && (
+        {showAccountForm && (
           <div
-            className="absolute left-0 right-0 bottom-0 z-50 flex flex-col rounded-t-[34px] bg-white/96 p-4 shadow-2xl backdrop-blur"
+            className="absolute left-5 right-5 z-50 rounded-[32px] border border-[#ead8c0] bg-[#fff8ef]/95 px-5 py-4 shadow-[0_16px_38px_rgba(72,45,25,0.28)] backdrop-blur"
             style={{
               top: "47%",
             }}
           >
+            <div className="mb-3 flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#d2ad62] text-lg text-white shadow-[0_6px_12px_rgba(72,45,25,0.22)]">
+                👤
+              </div>
+
+              <div>
+                <h2 className="text-[18px] font-extrabold leading-tight text-[#1f4f2b]">
+                  <span className="text-[#d7ffd9] drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]">
+  {accountMode === "register" ? "Create account" : "Log in"}
+</span>
+                </h2>
+
+                <p className="mt-1 text-[12px] leading-5 text-[#5f4a38]">
+                  Your account keeps your username, ticket, and credits so you can return to Elvy easily.
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              {accountMode === "register" && (
+                <div className="flex items-center gap-3 rounded-2xl border border-[#d8c5ad] bg-white/95 px-3 py-2 shadow-[inset_0_1px_2px_rgba(0,0,0,0.04),0_4px_10px_rgba(72,45,25,0.08)]">
+                  <span className="text-base text-[#6d5a48]">👤</span>
+                  <input
+                    type="text"
+                    value={accountDisplayName}
+                    onChange={(e) => setAccountDisplayName(e.target.value)}
+                    placeholder="Display name"
+                    className="min-w-0 flex-1 bg-transparent text-[14px] text-[#2b1a12] outline-none placeholder:text-[#8d8074]"
+                  />
+                </div>
+              )}
+
+              <div className="flex items-center gap-3 rounded-2xl border border-[#d8c5ad] bg-white/95 px-3 py-2 shadow-[inset_0_1px_2px_rgba(0,0,0,0.04),0_4px_10px_rgba(72,45,25,0.08)]">
+                <span className="text-base font-bold text-[#6d5a48]">@</span>
+                <input
+                  type="text"
+                  value={accountUsername}
+                  onChange={(e) => setAccountUsername(e.target.value)}
+                  placeholder="Username"
+                  className="min-w-0 flex-1 bg-transparent text-[14px] text-[#2b1a12] outline-none placeholder:text-[#8d8074]"
+                />
+              </div>
+
+              <div className="flex items-center gap-3 rounded-2xl border border-[#d8c5ad] bg-white/95 px-3 py-2 shadow-[inset_0_1px_2px_rgba(0,0,0,0.04),0_4px_10px_rgba(72,45,25,0.08)]">
+                <span className="text-base text-[#6d5a48]">🔒</span>
+                <input
+                  type="password"
+                  value={accountPassword}
+                  onChange={(e) => setAccountPassword(e.target.value)}
+                  placeholder="Password"
+                  className="min-w-0 flex-1 bg-transparent text-[14px] text-[#2b1a12] outline-none placeholder:text-[#8d8074]"
+                />
+              </div>
+            </div>
+
+            {accountMessage && (
+              <div className="mt-2 rounded-2xl border border-red-200 bg-white/95 px-3 py-2 shadow-sm">
+                <p className="text-[12px] font-bold text-red-700">
+                  {accountMessage}
+                </p>
+              </div>
+            )}
+
+<button
+  type="button"
+  onClick={submitAccount}
+  className="mt-4 w-full rounded-[24px] border border-[#2f7d32] bg-gradient-to-b from-[#43a047] to-[#1f6b2b] px-5 py-3 text-center shadow-[0_10px_22px_rgba(31,107,43,0.35)] transition-all active:scale-[0.98]"
+>
+  <div className="flex items-center justify-center gap-3">
+    <div className="flex h-7 w-7 items-center justify-center rounded-full bg-white/20 text-sm font-black text-[#eaffea] shadow-inner">
+      ✓
+    </div>
+
+    <span className="text-[16px] font-extrabold tracking-[0.2px] text-[#f4fff4] drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)]">
+      {accountMode === "register"
+        ? "Create account"
+        : "Log in"}
+    </span>
+  </div>
+</button>
+
+            <p className="mt-2 text-center text-[11px] font-semibold text-[#315b38]">
+              Your information is secure and private.
+            </p>
+
+            <div className="my-2 flex items-center gap-3 text-[11px] font-bold text-[#9a8a78]">
+              <div className="h-px flex-1 bg-[#e1d2bf]" />
+              OR
+              <div className="h-px flex-1 bg-[#e1d2bf]" />
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setAccountMode(accountMode === "register" ? "login" : "register");
+                setAccountMessage("");
+              }}
+              className="block w-full rounded-2xl border border-[#4a2d1f] bg-white/85 px-4 py-2 text-center text-[13px] font-extrabold text-[#4a2d1f] shadow-sm"
+            >
+              {accountMode === "register"
+                ? "I already have an account  ›"
+                : "Create a new account  ›"}
+            </button>
+
+            <button
+              onClick={() => setShowAccountForm(false)}
+              className="mt-1 block w-full rounded-2xl px-5 py-1.5 text-center text-[13px] font-semibold text-[#6b5a4c]"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+
+        {chatOpen && (
+          <div
+            className="absolute left-4 right-7 bottom-4 z-50 flex flex-col rounded-[40px]  bg-[#fff8ef]/96 p-4 shadow-[0_18px_42px_rgba(72,45,25,0.22)] backdrop-blur"
+            style={{
+              top: "48%",
+            }}
+          >
             <div className="mb-2 flex items-center justify-between">
               <div>
-                <h2 className="text-base font-bold text-[#3b2418]">Talk to Elvy</h2>
+                <h2 className="text-base font-bold text-[#3b2418]">
+                  {account ? `Talk to Elvy · ${account.displayName}` : "Talk to Elvy"}
+                </h2>
                 {isActivated && (
                   <p className="text-[11px] font-bold text-green-700">
                     Active · {repliesLeft} credits left
@@ -373,12 +730,23 @@ export default function MobileElvyPage() {
                 )}
               </div>
 
-              <button
-                onClick={() => setChatOpen(false)}
-                className="rounded-full bg-[#f1e1cf] px-3 py-1 text-xs text-[#4a2d1f]"
-              >
-                Close
-              </button>
+              <div className="flex gap-2">
+                {account && (
+                  <button
+                    onClick={logoutAccount}
+                    className="rounded-full bg-[#f1e1cf] px-3 py-1 text-xs text-[#4a2d1f]"
+                  >
+                    Logout
+                  </button>
+                )}
+
+                <button
+                  onClick={() => setChatOpen(false)}
+                  className="rounded-full bg-[#f1e1cf] px-3 py-1 text-xs text-[#4a2d1f]"
+                >
+                  Close
+                </button>
+              </div>
             </div>
 
             <div className="mb-3 flex-1 space-y-2 overflow-y-auto rounded-2xl bg-[#f7efe5] p-3">
@@ -480,7 +848,7 @@ export default function MobileElvyPage() {
               )}
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="mt-3 flex items-center gap-3">
               <input
                 ref={inputRef}
                 value={input}
@@ -491,14 +859,14 @@ export default function MobileElvyPage() {
                 }}
                 type="text"
                 placeholder={isSending ? "Elvy is replying..." : "Write..."}
-                className="min-w-0 flex-[1.4] rounded-2xl border border-[#e2d2bf] bg-white px-6 py-3 text-sm font-medium text-[#2b1a12] outline-none"
+                className="min-w-0 flex-[1.4] rounded-[22px] border border-[#d8c5ad] bg-white px-5 py-4 text-[15px] font-medium text-[#2b1a12] shadow-[inset_0_1px_2px_rgba(0,0,0,0.05)] outline-none placeholder:text-[#9a8d80]"
               />
 
               <button
                 type="button"
                 onClick={sendMessage}
                 disabled={isSending}
-                className="shrink-0 rounded-2xl px-4 py-3 text-sm font-bold shadow transition-all"
+                className="shrink-0 rounded-[22px] bg-gradient-to-b from-[#5d3824] to-[#3d2417] px-5 py-4 text-[15px] font-extrabold text-white shadow-[0_10px_18px_rgba(61,36,23,0.28)] transition-all active:scale-[0.98]"
                 style={{
                   backgroundColor: isSending ? "#bfae9d" : "#4a2d1f",
                   color: "#ffffff",

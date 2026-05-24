@@ -1,0 +1,40 @@
+[
+  {
+    "username": "said",
+    "passwordHash": "3991380d4c43b59ccedc938acab13205:5b82c428e5c488e92934db7104a0c275311cf2aaa45fcc9c2fa628cce6acaeac7ef856bfdf7b819b5b3e5837a888b5c9e43d69b30772fba35101fe74843d9cd1",
+    "displayName": "said",
+    "userCode": "ELVY-1779587515177",
+    "creditsLeft": 3,
+    "ticketStatus": "Active",
+    "lastMessages": [],
+    "createdAt": "2026-05-24T01:51:55.426Z",
+    "lastLoginAt": "2026-05-24T02:04:21.734Z",
+    "activatedAt": "2026-05-24T01:53:45.357Z"
+  },
+  {
+    "username": "lahcen",
+    "passwordHash": "514ffce1a8733e662fe8f4f086b7c8ab:fac0fb15ef491104f07e7f06b3b0de8595df4c5fd27fb38e5186234fc7e27fcecf607857a703ef8992f6336f1039f3cb353b62f4e5815334a4b4535720b9230e",
+    "displayName": "lacen",
+    "userCode": "ELVY-1779625031862",
+    "creditsLeft": 0,
+    "ticketStatus": "Active",
+    "lastMessages": [],
+    "createdAt": "2026-05-24T12:17:12.083Z",
+    "lastLoginAt": "2026-05-24T18:00:56.987Z",
+    "activatedAt": "2026-05-24T12:23:37.130Z",
+    "lastCreditUpdateAt": "2026-05-24T18:06:34.317Z"
+  },
+  {
+    "username": "adamo",
+    "passwordHash": "1901b387304f0a1fa6bf2ac666388232:c3bb3599aeb1114afd5f997fd66f3beca488ca5dc198745788ab9be7a3807e1584c50cac1f97ec97acb9924ad4b0541d63742049b875a0605259f3a061ed8d3e",
+    "displayName": "ahmed",
+    "userCode": "ELVY-1779657359857",
+    "creditsLeft": 0,
+    "ticketStatus": "Active",
+    "lastMessages": [],
+    "createdAt": "2026-05-24T21:16:00.096Z",
+    "lastLoginAt": "2026-05-24T21:19:37.329Z",
+    "lastCreditUpdateAt": "2026-05-24T21:19:19.677Z",
+    "activatedAt": "2026-05-24T21:18:58.690Z"
+  }
+]
