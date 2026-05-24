@@ -713,7 +713,7 @@ setActivationMessage("Elvy is activated.");
 
         {chatOpen && (
           <div
-            className="absolute left-5 right-5 bottom-5 z-50 flex flex-col overflow-hidden rounded-[18px] border border-[#d8b98f] bg-[#fff4e5]/92 shadow-[0_18px_40px_rgba(72,45,25,0.28)] backdrop-blur-md"
+            className="absolute left-0 right-0 bottom-0 z-50 flex flex-col overflow-hidden rounded-none border-t border-[#d8b98f] bg-[#fff4e5]/94 shadow-[0_-10px_28px_rgba(72,45,25,0.18)] backdrop-blur-md"
             style={{
               top: "45%",
             }}
@@ -749,7 +749,7 @@ setActivationMessage("Elvy is activated.");
               </div>
             </div>
 
-            <div className="mb-3 flex-1 space-y-2 overflow-y-auto rounded-2xl bg-[#f7efe5] p-3">
+            className="mb-3 flex-1 space-y-2 overflow-y-auto rounded-none border border-[#e2c49c] bg-[#fff8ef]/70 p-3"
               {messages.map((msg, index) => (
                 <div
                   key={index}
@@ -859,7 +859,7 @@ setActivationMessage("Elvy is activated.");
                 }}
                 type="text"
                 placeholder={isSending ? "Elvy is replying..." : "Write..."}
-                className="min-w-0 flex-[1.4] rounded-[22px] border border-[#d8c5ad] bg-white px-5 py-4 text-[15px] font-medium text-[#2b1a12] shadow-[inset_0_1px_2px_rgba(0,0,0,0.05)] outline-none placeholder:text-[#9a8d80]"
+                className="shrink-0 rounded-none border border-[#3d2417] bg-[#4a2d1f] px-5 py-4 text-[15px] font-extrabold text-white shadow-md transition-all active:scale-[0.98]"
               />
 
               <button
