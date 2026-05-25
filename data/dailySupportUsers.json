@@ -75,5 +75,30 @@
     "createdAt": "2026-05-24T21:16:00.104Z",
     "lastMobileReplyAt": "2026-05-24T21:19:19.673Z",
     "setupAccessNumber": "7320"
+  },
+  {
+    "code": "ELVY-1779730093413",
+    "name": "said86",
+    "ageGroup": "18–30",
+    "helpType": "Free trial",
+    "contactMethod": "Mobile",
+    "contactValue": "said86",
+    "status": "Pending",
+    "repliesLimit": 3,
+    "repliesUsed": 1,
+    "repliesLeft": 3,
+    "activated": true,
+    "adminMessages": [],
+    "userMessages": [],
+    "memory": {
+      "account": true,
+      "username": "said86",
+      "createdAt": "2026-05-25T17:28:13.677Z"
+    },
+    "paymentNoticeSent": false,
+    "paid": false,
+    "paymentStatus": "Unpaid",
+    "createdAt": "2026-05-25T17:28:13.677Z",
+    "lastMobileReplyAt": "2026-05-25T17:28:26.918Z"
   }
 ]

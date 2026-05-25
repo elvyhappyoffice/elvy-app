@@ -36,5 +36,17 @@
     "lastLoginAt": "2026-05-24T21:19:37.329Z",
     "lastCreditUpdateAt": "2026-05-24T21:19:19.677Z",
     "activatedAt": "2026-05-24T21:18:58.690Z"
+  },
+  {
+    "username": "said86",
+    "passwordHash": "e1862281daae123e5cc8f25fe29ffb14:32c26dd0543e258ee71cf6167f766d0828b15df6fc3e7b800642ac4d5450a389627a9acc6fea4be3bbbabd4f77b0bd3d91edf2efac0d23442c1f148115797197",
+    "displayName": "said86",
+    "userCode": "ELVY-1779730093413",
+    "creditsLeft": 2,
+    "ticketStatus": "Active",
+    "lastMessages": [],
+    "createdAt": "2026-05-25T17:28:13.665Z",
+    "lastLoginAt": "2026-05-25T17:28:13.666Z",
+    "lastCreditUpdateAt": "2026-05-25T17:28:26.947Z"
   }
 ]

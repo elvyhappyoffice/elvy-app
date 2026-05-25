@@ -742,10 +742,10 @@ setActivationMessage("Elvy is activated.");
               {messages.map((msg, index) => (
                 <div
                   key={index}
-                  className={`max-w-[78%] rounded-2xl px-3 py-2 text-sm leading-5 ${
+                  className={`max-w-[78%] px-4 py-3 text-sm leading-6 ${
                     msg.sender === "elvy"
-                      ? "mr-auto bg-white/90 text-[#2b1a12] font-medium shadow-sm"
-                      : "ml-auto bg-[#6b3f28] text-black text-[17px] font-extrabold tracking-[0.2px] shadow-md"
+                      ? "mr-auto rounded-[22px] bg-white text-[#2b1a12] font-medium shadow-[0_3px_10px_rgba(0,0,0,0.08)]"
+                      : "ml-auto rounded-[22px] border border-[#7fc2ff] bg-[#cfe9ff] text-[16px] font-bold text-[#11314d] shadow-[0_4px_12px_rgba(80,160,255,0.18)]"
                   }`}
                 >
                   {msg.text}
@@ -855,9 +855,9 @@ setActivationMessage("Elvy is activated.");
                 type="button"
                 onClick={sendMessage}
                 disabled={isSending}
-                className="shrink-0 rounded-none border border-[#3d2417] bg-[#4a2d1f] px-5 py-4 text-[15px] font-extrabold text-white shadow-md transition-all active:scale-[0.98]"
+                className="shrink-0 rounded-none border border-[#1d7fe2] bg-[#1d7fe2] px-5 py-4 text-[15px] font-extrabold text-white shadow-md transition-all active:scale-[0.98]"
                 style={{
-                  backgroundColor: isSending ? "#bfae9d" : "#4a2d1f",
+                  backgroundColor: isSending ? "#9fc8ef" : "#1d7fe2",
                   color: "#ffffff",
                   minWidth: "70px",
                   opacity: isSending ? 0.7 : 1,
