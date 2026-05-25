@@ -259,7 +259,7 @@ useEffect(() => {
         body: JSON.stringify({
           username: cleanUsername,
           password: cleanPassword,
-          displayName: cleanDisplayName || cleanUsername,
+          displayName: cleanUsername,
         }),
       });
 
@@ -617,18 +617,7 @@ setActivationMessage("Elvy is activated.");
             </div>
 
             <div className="space-y-2">
-              {accountMode === "register" && (
-                <div className="flex items-center gap-3 rounded-2xl border border-[#d8c5ad] bg-white/95 px-3 py-2 shadow-[inset_0_1px_2px_rgba(0,0,0,0.04),0_4px_10px_rgba(72,45,25,0.08)]">
-                  <span className="text-base text-[#6d5a48]">👤</span>
-                  <input
-                    type="text"
-                    value={accountDisplayName}
-                    onChange={(e) => setAccountDisplayName(e.target.value)}
-                    placeholder="Display name"
-                    className="min-w-0 flex-1 bg-transparent text-[14px] text-[#2b1a12] outline-none placeholder:text-[#8d8074]"
-                  />
-                </div>
-              )}
+
 
               <div className="flex items-center gap-3 rounded-2xl border border-[#d8c5ad] bg-white/95 px-3 py-2 shadow-[inset_0_1px_2px_rgba(0,0,0,0.04),0_4px_10px_rgba(72,45,25,0.08)]">
                 <span className="text-base font-bold text-[#6d5a48]">@</span>
