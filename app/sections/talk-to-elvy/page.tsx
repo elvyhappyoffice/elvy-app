@@ -1,97 +1,42 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { jsPDF } from "jspdf";
+import { useEffect, useState } from "react";
 
-type RoomStatus = "open" | "busy" | "closed";
-
-type Topic = {
+type ApplicationLink = {
   id: string;
   name: string;
   description: string;
+  url: string;
   isOpen: boolean;
-  repliesIncluded: number;
   sortOrder: number;
 };
 
-type AdminSettings = {
-  roomStatus: RoomStatus;
-  inputLimit: number;
-  outputLimit: number;
-  maxLiveUsers: number;
-  dailyFreeRepliesPerUser: number;
-  totalFreeRepliesRoom: number;
-  oneUsePerDay: boolean;
-};
+const APPLICATIONS_STORAGE_KEY = "elvy_applications_links";
 
-const TOPICS_STORAGE_KEY = "talk_to_elvy_topics";
-const FREE_USAGE_STORAGE_KEY = "talk_to_elvy_free_usage";
-const SETTINGS_STORAGE_KEY = "talk_to_elvy_settings";
-const ROOM_TOTAL_FREE_KEY = "talk_to_elvy_total_free_used";
-
-const today = new Date().toISOString().slice(0, 10);
-const visitorKey = `talk_to_elvy_visitor_${today}`;
-
-const WELCOME_REPLY = `Hello again.
-
-Welcome to Talk to Elvy.
-
-Elvy is a calm communication companion designed to help you express thoughts, organize ideas, and move through daily situations more clearly and gently.
-
-You may write a short message whenever you feel ready.`;
-
-const FREE_END_REPLY = `We have reached the end of the free conversation for now.
-
-To continue receiving support from Elvy, please join the Daily Support room.`;
-
-const defaultTopics: Topic[] = [
+const defaultApplications: ApplicationLink[] = [
   {
-    id: "daily-check-in",
-    name: "Daily Check-in",
-    description: "A calm moment to see how your day is going.",
+    id: "elvy-mobile-app",
+    name: "Elvy Mobile Application",
+    description:
+      "Create an account, activate your ticket, and communicate with Elvy through the mobile application.",
+    url: "/mobile",
     isOpen: true,
-    repliesIncluded: 3,
     sortOrder: 1,
   },
   {
-    id: "simple-plan",
-    name: "Simple Plan",
-    description: "Help organize one or two simple steps.",
+    id: "android-application",
+    name: "Android Application",
+    description: "Available later on Google Play.",
+    url: "",
     isOpen: true,
-    repliesIncluded: 3,
     sortOrder: 2,
-  },
-  {
-    id: "remember-something",
-    name: "Remember Something",
-    description: "Help keep something important clear.",
-    isOpen: true,
-    repliesIncluded: 3,
-    sortOrder: 3,
-  },
-  {
-    id: "write-to-someone",
-    name: "Write to Someone",
-    description: "Help write a short and kind message.",
-    isOpen: true,
-    repliesIncluded: 3,
-    sortOrder: 4,
   },
 ];
 
-const defaultSettings: AdminSettings = {
-  roomStatus: "open",
-  inputLimit: 150,
-  outputLimit: 200,
-  maxLiveUsers: 5,
-  dailyFreeRepliesPerUser: 3,
-  totalFreeRepliesRoom: 100,
-  oneUsePerDay: true,
-};
-
 function safeParse<T>(value: string | null, fallback: T): T {
   if (!value) return fallback;
+
   try {
     return JSON.parse(value) as T;
   } catch {
@@ -99,265 +44,55 @@ function safeParse<T>(value: string | null, fallback: T): T {
   }
 }
 
-function sortTopics(topics: Topic[]) {
-  return [...topics].sort((a, b) => a.sortOrder - b.sortOrder);
+function sortApplications(apps: ApplicationLink[]) {
+  return [...apps].sort((a, b) => a.sortOrder - b.sortOrder);
 }
 
-async function getElvyAIReply(userMessage: string, limit: number) {
-  const response = await fetch("/api/talk-to-elvy", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      message: userMessage,
-      outputLimit: limit,
-    }),
-  });
+export default function ElvyApplicationsPage() {
+  const [applications, setApplications] =
+    useState<ApplicationLink[]>(defaultApplications);
 
-  const data = await response.json();
-
-  if (!response.ok) {
-    throw new Error(data?.error || "Elvy could not reply.");
-  }
-
-  return String(data?.reply || "").trim();
-}
-
-export default function TalkToElvyPage() {
-  const [topics, setTopics] = useState<Topic[]>(defaultTopics);
-  const [settings, setSettings] = useState<AdminSettings>(defaultSettings);
-  const [freeUsage, setFreeUsage] = useState<Record<string, number>>({});
-  const [roomTotalFreeUsed, setRoomTotalFreeUsed] = useState(0);
-
-  const [userMessage, setUserMessage] = useState("");
-  const [lastUserMessage, setLastUserMessage] = useState("");
-  const [reply, setReply] = useState(WELCOME_REPLY);
-  const [isThinking, setIsThinking] = useState(false);
-
+  const [role, setRole] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [showAdminDashboard, setShowAdminDashboard] = useState(false);
-  const [liveUsers, setLiveUsers] = useState(1);
 
-  const [todayCost, setTodayCost] = useState(0);
-  const [monthlyCost, setMonthlyCost] = useState(0);
+  const [newName, setNewName] = useState("");
+  const [newDescription, setNewDescription] = useState("");
+  const [newUrl, setNewUrl] = useState("");
+  const [newSortOrder, setNewSortOrder] = useState(1);
+  const [newIsOpen, setNewIsOpen] = useState(true);
 
-  const [newTopicName, setNewTopicName] = useState("");
-  const [newTopicDescription, setNewTopicDescription] = useState("");
-  const [newTopicReplies, setNewTopicReplies] = useState(3);
-
-  const [editingTopicId, setEditingTopicId] = useState<string | null>(null);
-  const [editTopicName, setEditTopicName] = useState("");
-  const [editTopicDescription, setEditTopicDescription] = useState("");
-  const [editTopicIsOpen, setEditTopicIsOpen] = useState(true);
-  const [editTopicReplies, setEditTopicReplies] = useState(3);
-  const [editTopicSortOrder, setEditTopicSortOrder] = useState(1);
-  const [role, setRole] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editUrl, setEditUrl] = useState("");
+  const [editSortOrder, setEditSortOrder] = useState(1);
+  const [editIsOpen, setEditIsOpen] = useState(true);
 
   useEffect(() => {
-    const savedTopics = safeParse<Topic[]>(
-      localStorage.getItem(TOPICS_STORAGE_KEY),
-      defaultTopics
+    const savedApplications = safeParse<ApplicationLink[]>(
+      localStorage.getItem(APPLICATIONS_STORAGE_KEY),
+      defaultApplications
     );
 
-    const savedFreeUsage = safeParse<Record<string, number>>(
-      localStorage.getItem(FREE_USAGE_STORAGE_KEY),
-      {}
-    );
-
-    const savedSettings = safeParse<AdminSettings>(
-      localStorage.getItem(SETTINGS_STORAGE_KEY),
-      defaultSettings
-    );
-
-    const savedRoomTotal = Number(localStorage.getItem(ROOM_TOTAL_FREE_KEY) || "0");
-
-    setTopics(sortTopics(savedTopics));
-    setFreeUsage(savedFreeUsage);
-    setSettings(savedSettings);
-    setRoomTotalFreeUsed(savedRoomTotal);
+    setApplications(sortApplications(savedApplications));
 
     const savedRole = localStorage.getItem("adminRole");
     const room = localStorage.getItem("adminRoom");
 
     setRole(savedRole);
     setIsAdmin(
-      savedRole === "founder" || (savedRole === "admin" && room === "talk-to-elvy")
+      savedRole === "founder" ||
+        (savedRole === "admin" && room === "talk-to-elvy")
     );
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(TOPICS_STORAGE_KEY, JSON.stringify(sortTopics(topics)));
-  }, [topics]);
-
-  useEffect(() => {
-    localStorage.setItem(FREE_USAGE_STORAGE_KEY, JSON.stringify(freeUsage));
-  }, [freeUsage]);
-
-  useEffect(() => {
-    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
-  }, [settings]);
-
-  useEffect(() => {
-    localStorage.setItem(ROOM_TOTAL_FREE_KEY, String(roomTotalFreeUsed));
-  }, [roomTotalFreeUsed]);
-
-  const visitorUsedToday = freeUsage[visitorKey] || 0;
-
-  const visitorFreeTrialsLeft = Math.max(
-    settings.dailyFreeRepliesPerUser - visitorUsedToday,
-    0
-  );
-
-  const roomMessage = useMemo(() => {
-    if (isAdmin) return "";
-
-    if (settings.roomStatus === "closed") {
-      return "This room is closed now. Please come back later.";
-    }
-
-    if (settings.roomStatus === "busy") {
-      return "The room is busy now. Please wait a few minutes.";
-    }
-
-    if (liveUsers > settings.maxLiveUsers) {
-      return "The room is full now. Please try again shortly.";
-    }
-
-    if (settings.oneUsePerDay && visitorUsedToday >= settings.dailyFreeRepliesPerUser) {
-      return FREE_END_REPLY;
-    }
-
-    if (roomTotalFreeUsed >= settings.totalFreeRepliesRoom) {
-      return FREE_END_REPLY;
-    }
-
-    return "";
-  }, [
-    isAdmin,
-    settings.roomStatus,
-    settings.maxLiveUsers,
-    settings.oneUsePerDay,
-    settings.dailyFreeRepliesPerUser,
-    settings.totalFreeRepliesRoom,
-    liveUsers,
-    visitorUsedToday,
-    roomTotalFreeUsed,
-  ]);
-
-  async function handleSendToElvy() {
-    const cleanMessage = userMessage.trim();
-
-    if (!cleanMessage) return;
-
-    if (settings.oneUsePerDay && visitorUsedToday >= settings.dailyFreeRepliesPerUser) {
-      setReply(FREE_END_REPLY);
-      return;
-    }
-
-    if (roomTotalFreeUsed >= settings.totalFreeRepliesRoom) {
-      setReply(FREE_END_REPLY);
-      return;
-    }
-
-    setIsThinking(true);
-    setReply("");
-    setLastUserMessage(cleanMessage);
-
-    try {
-      const finalReply = await getElvyAIReply(cleanMessage, settings.outputLimit);
-
-      setReply(
-        finalReply ||
-          "I am here with you. Let us keep this simple and take one calm step together."
-      );
-
-      setFreeUsage((prev) => ({
-        ...prev,
-        [visitorKey]: (prev[visitorKey] || 0) + 1,
-      }));
-
-      setRoomTotalFreeUsed((prev) => prev + 1);
-
-      const estimatedCost = 0.002;
-      setTodayCost((prev) => Number((prev + estimatedCost).toFixed(4)));
-      setMonthlyCost((prev) => Number((prev + estimatedCost).toFixed(4)));
-
-      setUserMessage("");
-    } catch {
-      setReply(
-        "I am here with you. Something small went wrong, but we can still keep this calm. Please try again in a moment."
-      );
-    } finally {
-      setIsThinking(false);
-    }
-  }
-
-  function handleCopyReply() {
-    if (!reply.trim()) return;
-    navigator.clipboard.writeText(reply);
-    alert("Reply copied.");
-  }
-
-  function handleDownloadDoc() {
-    if (!reply.trim()) return;
-
-    const content = `
-<html>
-<head>
-<meta charset="utf-8" />
-<title>Elvy Reply</title>
-</head>
-<body style="font-family: Arial, sans-serif; padding: 30px; line-height: 1.6;">
-  <h2>Elvy Reply</h2>
-  <p><strong>Happy Office — Talk to Elvy</strong></p>
-  <hr />
-  <pre style="white-space: pre-wrap;">${reply}</pre>
-</body>
-</html>
-`;
-
-    const blob = new Blob([content], { type: "application/msword" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "elvy-reply.doc";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-  }
-
-  function handleDownloadPDF() {
-    if (!reply.trim()) return;
-
-    const doc = new jsPDF();
-    const margin = 15;
-    const maxWidth = doc.internal.pageSize.getWidth() - margin * 2;
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(16);
-    doc.text("Elvy Reply", margin, 20);
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(11);
-    doc.text("Happy Office — Talk to Elvy", margin, 28);
-
-    doc.setFontSize(12);
-    const lines = doc.splitTextToSize(reply, maxWidth);
-
-    let y = 42;
-    for (const line of lines) {
-      if (y > 275) {
-        doc.addPage();
-        y = 20;
-      }
-      doc.text(line, margin, y);
-      y += 7;
-    }
-
-    doc.save("elvy-reply.pdf");
-  }
+    localStorage.setItem(
+      APPLICATIONS_STORAGE_KEY,
+      JSON.stringify(sortApplications(applications))
+    );
+  }, [applications]);
 
   function handleLogout() {
     localStorage.removeItem("adminRole");
@@ -367,227 +102,174 @@ export default function TalkToElvyPage() {
     setShowAdminDashboard(false);
   }
 
-  function addTopic() {
-    const cleanName = newTopicName.trim();
-    const cleanDescription = newTopicDescription.trim();
+  function addApplication() {
+    const cleanName = newName.trim();
+    const cleanDescription = newDescription.trim();
+    const cleanUrl = newUrl.trim();
 
     if (!cleanName) return;
 
-    const created: Topic = {
-      id: `topic_${Date.now()}`,
+    const created: ApplicationLink = {
+      id: `application_${Date.now()}`,
       name: cleanName,
       description: cleanDescription,
-      isOpen: true,
-      repliesIncluded: Math.max(1, newTopicReplies),
-      sortOrder: topics.length + 1,
+      url: cleanUrl,
+      isOpen: newIsOpen,
+      sortOrder: Math.max(1, newSortOrder),
     };
 
-    setTopics((prev) => sortTopics([...prev, created]));
-    setNewTopicName("");
-    setNewTopicDescription("");
-    setNewTopicReplies(3);
+    setApplications((prev) => sortApplications([...prev, created]));
+    setNewName("");
+    setNewDescription("");
+    setNewUrl("");
+    setNewSortOrder(applications.length + 2);
+    setNewIsOpen(true);
   }
 
-  function startEditTopic(topic: Topic) {
-    setEditingTopicId(topic.id);
-    setEditTopicName(topic.name);
-    setEditTopicDescription(topic.description);
-    setEditTopicIsOpen(topic.isOpen);
-    setEditTopicReplies(topic.repliesIncluded);
-    setEditTopicSortOrder(topic.sortOrder);
+  function startEdit(app: ApplicationLink) {
+    setEditingId(app.id);
+    setEditName(app.name);
+    setEditDescription(app.description);
+    setEditUrl(app.url);
+    setEditSortOrder(app.sortOrder);
+    setEditIsOpen(app.isOpen);
   }
 
-  function saveEditedTopic() {
-    if (!editingTopicId) return;
+  function saveEdit() {
+    if (!editingId) return;
 
-    setTopics((prev) =>
-      sortTopics(
-        prev.map((topic) =>
-          topic.id === editingTopicId
+    setApplications((prev) =>
+      sortApplications(
+        prev.map((app) =>
+          app.id === editingId
             ? {
-                ...topic,
-                name: editTopicName.trim() || topic.name,
-                description: editTopicDescription.trim(),
-                isOpen: editTopicIsOpen,
-                repliesIncluded: Math.max(1, editTopicReplies),
-                sortOrder: Math.max(1, editTopicSortOrder),
+                ...app,
+                name: editName.trim() || app.name,
+                description: editDescription.trim(),
+                url: editUrl.trim(),
+                sortOrder: Math.max(1, editSortOrder),
+                isOpen: editIsOpen,
               }
-            : topic
+            : app
         )
       )
     );
 
-    setEditingTopicId(null);
+    setEditingId(null);
   }
 
-  function deleteTopic(topicId: string) {
-    setTopics((prev) => prev.filter((topic) => topic.id !== topicId));
+  function deleteApplication(id: string) {
+    setApplications((prev) => prev.filter((app) => app.id !== id));
   }
 
-  function resetFreeUsage() {
-    setFreeUsage({});
-    setRoomTotalFreeUsed(0);
-    setReply(WELCOME_REPLY);
-    setLastUserMessage("");
-    setUserMessage("");
-    localStorage.removeItem(FREE_USAGE_STORAGE_KEY);
-    localStorage.removeItem(ROOM_TOTAL_FREE_KEY);
-  }
+  const visibleApplications = sortApplications(applications).filter(
+    (app) => app.isOpen
+  );
 
   return (
     <main
-      className="relative min-h-screen w-full bg-cover bg-center bg-no-repeat"
+      className="relative min-h-screen w-full overflow-hidden bg-cover bg-center bg-no-repeat"
       style={{ backgroundImage: "url('/images/talk-to-elvy.png')" }}
     >
-      <div className="absolute inset-0 bg-white/10" />
+      <div className="absolute inset-0 bg-[#fff1dc]/10" />
 
-      <div className="relative z-10 min-h-screen px-6 py-6">
+      <div className="relative z-10 min-h-screen px-5 py-6">
         {role === "founder" ? (
           <button
             onClick={() => {
               window.location.href = "/founder/dashboard";
             }}
-            className="absolute left-[2%] top-[4%] z-30 rounded-full bg-black px-6 py-3 text-white"
+            className="absolute left-[2%] top-[4%] z-30 rounded-full bg-black px-6 py-3 text-white shadow-lg"
           >
             ← Back to Dashboard
           </button>
         ) : (
           <Link
             href="/happy-office"
-            className="absolute left-[2%] top-[4%] z-30 rounded-full bg-black px-6 py-3 text-white"
+            className="absolute left-[2%] top-[4%] z-30 rounded-full bg-black px-6 py-3 text-white shadow-lg"
           >
             ← Back to Happy Office
           </Link>
         )}
 
         {isAdmin && (
-          <div className="absolute right-6 top-6 z-50 flex gap-2">
+          <div className="absolute right-5 top-5 z-50 flex gap-2">
             <button
               onClick={() => setShowAdminDashboard(true)}
-              className="rounded-full bg-black px-4 py-2 text-white"
+              className="rounded-full bg-black px-4 py-2 text-white shadow-lg"
             >
               Open Controls
             </button>
 
             <button
               onClick={handleLogout}
-              className="rounded-full bg-red-600 px-4 py-2 text-white hover:bg-red-700"
+              className="rounded-full bg-red-600 px-4 py-2 text-white shadow-lg hover:bg-red-700"
             >
               Logout
             </button>
           </div>
         )}
 
-        <div className="absolute left-1/2 top-0 -translate-x-1/2 text-center">
-          <p className="rounded-lg bg-white/60 px-6 py-2 text-lg font-medium text-stone-800 backdrop-blur">
-            Talk to Elvy
-          </p>
-        </div>
+        <section
+          className="absolute top-[70px] w-[375px] max-w-[calc(100vw-40px)]"
+          style={{ left: "calc(35% + 100px)" }}
+        >
+          <div className="text-center">
+            <p className="text-sm font-bold uppercase tracking-[0.32em] text-[#8a4b24] drop-shadow-sm">
+              Welcome to
+            </p>
 
-        {roomMessage && (
-          <div className="absolute left-1/2 top-[28%] w-[430px] -translate-x-1/2 rounded-2xl bg-yellow-100 p-5 text-center text-stone-800 shadow-xl">
-            <p className="mb-4 whitespace-pre-line">{roomMessage}</p>
-            <Link
-              href="/sections/daily-support"
-              className="inline-block rounded-xl bg-green-700 px-4 py-2 text-white"
-            >
-              Join Daily Support
-            </Link>
+            <h1 className="mt-2 text-4xl font-black tracking-tight text-[#6f3719] drop-shadow-sm">
+              Elvy Applications
+            </h1>
+
+            <p className="mx-auto mt-4 max-w-[430px] whitespace-pre-line text-base font-semibold leading-7 text-[#4f3524]">
+              {`Elvy Applications gives access to communication tools developed by Happy Office.
+
+Choose an application below to continue.`}
+            </p>
           </div>
-        )}
 
-        {!roomMessage && (
-          <>
-            <div className="absolute left-[56.5%] top-[10%] w-[470px] -translate-x-1/2">
-              <div className="rounded-2xl bg-white/75 p-5 shadow-lg backdrop-blur">
-                <h2 className="mb-3 text-center font-semibold">Elvy Reply</h2>
-
-                <div className="min-h-[250px] max-h-[340px] overflow-y-auto whitespace-pre-line rounded-lg bg-white/80 p-4 text-gray-700">
-                  {isThinking
-                    ? "Elvy is preparing a calm reply..."
-                    : reply || WELCOME_REPLY}
-                </div>
-
-                <div className="mt-4 flex justify-center gap-4 text-sm">
-                  <button
-                    onClick={handleCopyReply}
-                    disabled={!reply.trim() || isThinking}
-                    className="rounded bg-black px-3 py-1 text-white disabled:cursor-not-allowed disabled:bg-stone-400"
-                  >
-                    Copy
-                  </button>
-
-                  <button
-                    onClick={handleDownloadPDF}
-                    disabled={!reply.trim() || isThinking}
-                    className="rounded bg-black px-3 py-1 text-white disabled:cursor-not-allowed disabled:bg-stone-400"
-                  >
-                    PDF
-                  </button>
-
-                  <button
-                    onClick={handleDownloadDoc}
-                    disabled={!reply.trim() || isThinking}
-                    className="rounded bg-black px-3 py-1 text-white disabled:cursor-not-allowed disabled:bg-stone-400"
-                  >
-                    DOC
-                  </button>
-                </div>
+          <div className="mt-7 flex flex-col gap-5">
+            {visibleApplications.length === 0 ? (
+              <div className="rounded-[24px] border border-[#d2a36f]/70 bg-[#fff7ec]/90 p-5 text-center font-semibold text-[#4a2d1f] shadow-xl backdrop-blur-sm">
+                No application links are available at the moment.
               </div>
-            </div>
-
-            <div className="absolute right-[3.5%] top-[10%] w-[310px]">
-              <div className="rounded-2xl bg-white/85 p-4 shadow-lg backdrop-blur">
-                <h2 className="mb-2 font-semibold">Your Message</h2>
-
-                <p className="mt-1 text-sm text-stone-700">
-                  Free trials left:{" "}
-                  <span className="font-medium">{visitorFreeTrialsLeft}</span>
-                </p>
-
-                <textarea
-                  value={userMessage}
-                  onChange={(e) => {
-                    if (e.target.value.length <= settings.inputLimit) {
-                      setUserMessage(e.target.value);
-                    }
-                  }}
-                  placeholder="Write a short message..."
-                  disabled={isThinking}
-                  className="mb-2 mt-3 h-40 w-full rounded border p-2 disabled:cursor-not-allowed disabled:bg-stone-100 disabled:text-stone-400"
-                />
-
-                <div className="mb-3 flex items-center justify-between text-sm">
-                  <span className="text-stone-600">Keep it short and clear.</span>
-                  <span
-                    className={
-                      userMessage.length > settings.inputLimit - 30
-                        ? "text-red-600"
-                        : "text-stone-600"
-                    }
-                  >
-                    {userMessage.length}/{settings.inputLimit}
-                  </span>
-                </div>
-
-                <button
-                  onClick={handleSendToElvy}
-                  disabled={!userMessage.trim() || isThinking}
-                  className="w-full rounded bg-black p-2 text-white disabled:cursor-not-allowed disabled:bg-stone-400"
+            ) : (
+              visibleApplications.map((app) => (
+                <div
+                  key={app.id}
+                  className="w-full rounded-[24px] border border-[#d4a06c]/75 bg-[#fff7ec]/90 p-5 shadow-2xl backdrop-blur-sm"
                 >
-                  {isThinking ? "Processing..." : "Send to Elvy"}
-                </button>
+                  <h2 className="text-2xl font-black text-[#6f3719]">
+                    {app.name}
+                  </h2>
 
-                {lastUserMessage && (
-                  <div className="mt-4 rounded-xl bg-stone-100 p-3 text-sm text-stone-700">
-                    <div className="mb-1 font-semibold">You wrote:</div>
-                    <div>{lastUserMessage}</div>
-                  </div>
-                )}
-              </div>
-            </div>
-          </>
-        )}
+                  {app.description && (
+                    <p className="mt-3 min-h-[45px] text-sm font-semibold leading-6 text-[#573923]">
+                      {app.description}
+                    </p>
+                  )}
+
+                  {app.url ? (
+                    <a
+                      href={app.url}
+                      target={app.url.startsWith("http") ? "_blank" : "_self"}
+                      rel="noopener noreferrer"
+                      className="mt-5 block w-full rounded-2xl bg-[#1f6b2b] px-5 py-3 text-center font-extrabold text-white shadow-lg transition hover:bg-[#185622] active:scale-[0.98]"
+                    >
+                      Open Elvy Application
+                    </a>
+                  ) : (
+                    <div className="mt-5 rounded-2xl bg-[#ecd2ad]/95 px-5 py-3 text-center font-extrabold text-[#6f3719] shadow-inner">
+                      Coming Soon
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </section>
 
         {isAdmin && showAdminDashboard && (
           <div className="fixed inset-0 z-[60] overflow-y-auto bg-black/50 p-4">
@@ -595,10 +277,10 @@ export default function TalkToElvyPage() {
               <div className="mb-6 flex items-center justify-between gap-4">
                 <div>
                   <h2 className="text-2xl font-semibold">
-                    Talk to Elvy Control Center
+                    Elvy Applications Control Center
                   </h2>
                   <p className="text-sm text-stone-600">
-                    Admin controls are hidden from visitors.
+                    Add, edit, describe, show, hide, or delete application links.
                   </p>
                 </div>
 
@@ -610,297 +292,187 @@ export default function TalkToElvyPage() {
                 </button>
               </div>
 
-              <div className="grid gap-6 md:grid-cols-2">
-                <div className="rounded-xl border bg-stone-50 p-4">
-                  <h3 className="mb-3 text-lg font-semibold">Room Settings</h3>
+              <div className="rounded-xl border bg-stone-50 p-4">
+                <h3 className="mb-3 text-lg font-semibold">
+                  Add Application Link
+                </h3>
 
-                  <label className="mb-2 block text-sm">Room status</label>
-                  <select
-                    value={settings.roomStatus}
-                    onChange={(e) =>
-                      setSettings({
-                        ...settings,
-                        roomStatus: e.target.value as RoomStatus,
-                      })
-                    }
-                    className="mb-4 w-full rounded border p-2"
-                  >
-                    <option value="open">Open</option>
-                    <option value="busy">Busy</option>
-                    <option value="closed">Closed</option>
-                  </select>
-
-                  <label className="mb-2 block text-sm">Input character limit</label>
+                <div className="grid gap-3 md:grid-cols-5">
                   <input
-                    type="number"
-                    value={settings.inputLimit}
-                    onChange={(e) =>
-                      setSettings({
-                        ...settings,
-                        inputLimit: Math.max(20, Number(e.target.value)),
-                      })
-                    }
-                    className="mb-4 w-full rounded border p-2"
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    placeholder="Application name"
+                    className="rounded border p-2"
                   />
 
-                  <label className="mb-2 block text-sm">Output reply limit</label>
                   <input
-                    type="number"
-                    value={settings.outputLimit}
-                    onChange={(e) =>
-                      setSettings({
-                        ...settings,
-                        outputLimit: Math.max(20, Number(e.target.value)),
-                      })
-                    }
-                    className="mb-4 w-full rounded border p-2"
+                    value={newDescription}
+                    onChange={(e) => setNewDescription(e.target.value)}
+                    placeholder="Short description"
+                    className="rounded border p-2 md:col-span-2"
                   />
 
-                  <label className="mb-2 block text-sm">Max live users</label>
                   <input
-                    type="number"
-                    value={settings.maxLiveUsers}
-                    onChange={(e) =>
-                      setSettings({
-                        ...settings,
-                        maxLiveUsers: Math.max(1, Number(e.target.value)),
-                      })
-                    }
-                    className="mb-4 w-full rounded border p-2"
+                    value={newUrl}
+                    onChange={(e) => setNewUrl(e.target.value)}
+                    placeholder="Application link"
+                    className="rounded border p-2"
                   />
 
-                  <label className="mb-2 block text-sm">
-                    Daily free replies per user
-                  </label>
                   <input
                     type="number"
-                    value={settings.dailyFreeRepliesPerUser}
-                    onChange={(e) =>
-                      setSettings({
-                        ...settings,
-                        dailyFreeRepliesPerUser: Math.max(1, Number(e.target.value)),
-                      })
-                    }
-                    className="mb-4 w-full rounded border p-2"
+                    value={newSortOrder}
+                    onChange={(e) => setNewSortOrder(Number(e.target.value))}
+                    placeholder="Order"
+                    className="rounded border p-2"
                   />
-
-                  <label className="mb-2 block text-sm">
-                    Total free replies for room
-                  </label>
-                  <input
-                    type="number"
-                    value={settings.totalFreeRepliesRoom}
-                    onChange={(e) =>
-                      setSettings({
-                        ...settings,
-                        totalFreeRepliesRoom: Math.max(1, Number(e.target.value)),
-                      })
-                    }
-                    className="mb-4 w-full rounded border p-2"
-                  />
-
-                  <label className="flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={settings.oneUsePerDay}
-                      onChange={(e) =>
-                        setSettings({
-                          ...settings,
-                          oneUsePerDay: e.target.checked,
-                        })
-                      }
-                    />
-                    Limit same visitor per day
-                  </label>
                 </div>
 
-                <div className="rounded-xl border bg-stone-50 p-4">
-                  <h3 className="mb-3 text-lg font-semibold">Usage Monitor</h3>
-
-                  <p className="text-sm">Cost per message: $0.002</p>
-                  <p className="text-sm">Today total: ${todayCost}</p>
-                  <p className="text-sm">Monthly total: ${monthlyCost}</p>
-
-                  <h3 className="mb-3 mt-6 text-lg font-semibold">Live Users</h3>
-                  <p className="mb-2 text-sm">Active now: {liveUsers}</p>
-
+                <label className="mt-3 flex items-center gap-2 text-sm">
                   <input
-                    type="number"
-                    value={liveUsers}
-                    onChange={(e) => setLiveUsers(Math.max(1, Number(e.target.value)))}
-                    className="mb-4 w-full rounded border p-2"
+                    type="checkbox"
+                    checked={newIsOpen}
+                    onChange={(e) => setNewIsOpen(e.target.checked)}
                   />
+                  Show this application to users
+                </label>
 
-                  <h3 className="mb-3 mt-6 text-lg font-semibold">Free Usage</h3>
-                  <p className="text-sm">
-                    Room free replies used: {roomTotalFreeUsed}/
-                    {settings.totalFreeRepliesRoom}
-                  </p>
-                  <p className="text-sm">
-                    Current visitor used today: {visitorUsedToday}/
-                    {settings.dailyFreeRepliesPerUser}
-                  </p>
-                  <p className="text-sm">
-                    Current visitor trials left: {visitorFreeTrialsLeft}
-                  </p>
+                <button
+                  onClick={addApplication}
+                  className="mt-3 rounded bg-black px-4 py-2 text-white"
+                >
+                  Add Link
+                </button>
+              </div>
 
-                  <button
-                    onClick={resetFreeUsage}
-                    className="mt-4 rounded bg-red-600 px-4 py-2 text-white"
-                  >
-                    Reset Free Usage
-                  </button>
-                </div>
+              <div className="mt-6 rounded-xl border bg-stone-50 p-4">
+                <h3 className="mb-3 text-lg font-semibold">
+                  Application Links
+                </h3>
 
-                <div className="rounded-xl border bg-stone-50 p-4 md:col-span-2">
-                  <h3 className="mb-3 text-lg font-semibold">Add Topic</h3>
+                <div className="space-y-3">
+                  {sortApplications(applications).map((app) => (
+                    <div
+                      key={app.id}
+                      className="rounded-xl border bg-white p-3 shadow-sm"
+                    >
+                      {editingId === app.id ? (
+                        <div className="grid gap-3 md:grid-cols-5">
+                          <input
+                            value={editName}
+                            onChange={(e) => setEditName(e.target.value)}
+                            className="rounded border p-2"
+                          />
 
-                  <div className="grid gap-3 md:grid-cols-3">
-                    <input
-                      value={newTopicName}
-                      onChange={(e) => setNewTopicName(e.target.value)}
-                      placeholder="Topic name"
-                      className="rounded border p-2"
-                    />
+                          <input
+                            value={editDescription}
+                            onChange={(e) =>
+                              setEditDescription(e.target.value)
+                            }
+                            className="rounded border p-2 md:col-span-2"
+                          />
 
-                    <input
-                      value={newTopicDescription}
-                      onChange={(e) => setNewTopicDescription(e.target.value)}
-                      placeholder="Description"
-                      className="rounded border p-2"
-                    />
+                          <input
+                            value={editUrl}
+                            onChange={(e) => setEditUrl(e.target.value)}
+                            className="rounded border p-2"
+                          />
 
-                    <input
-                      type="number"
-                      value={newTopicReplies}
-                      onChange={(e) => setNewTopicReplies(Number(e.target.value))}
-                      placeholder="Free replies"
-                      className="rounded border p-2"
-                    />
-                  </div>
+                          <input
+                            type="number"
+                            value={editSortOrder}
+                            onChange={(e) =>
+                              setEditSortOrder(Number(e.target.value))
+                            }
+                            className="rounded border p-2"
+                          />
 
-                  <button
-                    onClick={addTopic}
-                    className="mt-3 rounded bg-black px-4 py-2 text-white"
-                  >
-                    Add Topic
-                  </button>
-                </div>
-
-                <div className="rounded-xl border bg-stone-50 p-4 md:col-span-2">
-                  <h3 className="mb-3 text-lg font-semibold">Topic Controls</h3>
-
-                  <div className="space-y-3">
-                    {sortTopics(topics).map((topic) => (
-                      <div key={topic.id} className="rounded-xl border bg-white p-3">
-                        {editingTopicId === topic.id ? (
-                          <div className="grid gap-3 md:grid-cols-5">
+                          <label className="flex items-center gap-2 text-sm">
                             <input
-                              value={editTopicName}
-                              onChange={(e) => setEditTopicName(e.target.value)}
-                              className="rounded border p-2"
-                            />
-
-                            <input
-                              value={editTopicDescription}
+                              type="checkbox"
+                              checked={editIsOpen}
                               onChange={(e) =>
-                                setEditTopicDescription(e.target.value)
+                                setEditIsOpen(e.target.checked)
                               }
-                              className="rounded border p-2"
                             />
+                            Show
+                          </label>
 
-                            <input
-                              type="number"
-                              value={editTopicReplies}
-                              onChange={(e) =>
-                                setEditTopicReplies(Number(e.target.value))
-                              }
-                              className="rounded border p-2"
-                            />
+                          <button
+                            onClick={saveEdit}
+                            className="rounded bg-green-700 px-3 py-2 text-white"
+                          >
+                            Save
+                          </button>
 
-                            <input
-                              type="number"
-                              value={editTopicSortOrder}
-                              onChange={(e) =>
-                                setEditTopicSortOrder(Number(e.target.value))
-                              }
-                              className="rounded border p-2"
-                            />
-
-                            <label className="flex items-center gap-2 text-sm">
-                              <input
-                                type="checkbox"
-                                checked={editTopicIsOpen}
-                                onChange={(e) =>
-                                  setEditTopicIsOpen(e.target.checked)
-                                }
-                              />
-                              Open
-                            </label>
-
-                            <button
-                              onClick={saveEditedTopic}
-                              className="rounded bg-green-700 px-3 py-2 text-white"
-                            >
-                              Save
-                            </button>
-
-                            <button
-                              onClick={() => setEditingTopicId(null)}
-                              className="rounded bg-stone-500 px-3 py-2 text-white"
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <div className="font-semibold">{topic.name}</div>
-                              <div className="text-sm text-stone-600">
-                                {topic.description}
-                              </div>
-                              <div className="mt-1 text-xs text-stone-600">
-                                Replies: {topic.repliesIncluded} •{" "}
-                                {topic.isOpen ? "Open" : "Closed"} • Order:{" "}
-                                {topic.sortOrder}
-                              </div>
+                          <button
+                            onClick={() => setEditingId(null)}
+                            className="rounded bg-stone-500 px-3 py-2 text-white"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                          <div>
+                            <div className="text-lg font-semibold">
+                              {app.name}
                             </div>
 
-                            <div className="flex flex-wrap gap-2">
-                              <button
-                                onClick={() => startEditTopic(topic)}
-                                className="rounded bg-blue-600 px-2 py-1 text-xs text-white"
-                              >
-                                Edit
-                              </button>
+                            <div className="mt-1 text-sm text-stone-600">
+                              {app.description || "No description"}
+                            </div>
 
-                              <button
-                                onClick={() =>
-                                  setTopics((prev) =>
-                                    prev.map((item) =>
-                                      item.id === topic.id
-                                        ? { ...item, isOpen: !item.isOpen }
-                                        : item
-                                    )
+                            <div className="mt-1 break-all text-xs text-stone-500">
+                              {app.url || "No link / Coming soon"}
+                            </div>
+
+                            <div className="mt-1 text-xs text-stone-600">
+                              {app.isOpen ? "Visible" : "Hidden"} • Order:{" "}
+                              {app.sortOrder}
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              onClick={() => startEdit(app)}
+                              className="rounded bg-blue-600 px-3 py-1 text-sm text-white"
+                            >
+                              Edit
+                            </button>
+
+                            <button
+                              onClick={() =>
+                                setApplications((prev) =>
+                                  prev.map((item) =>
+                                    item.id === app.id
+                                      ? { ...item, isOpen: !item.isOpen }
+                                      : item
                                   )
-                                }
-                                className="rounded bg-stone-700 px-2 py-1 text-xs text-white"
-                              >
-                                {topic.isOpen ? "Close" : "Open"}
-                              </button>
+                                )
+                              }
+                              className="rounded bg-stone-700 px-3 py-1 text-sm text-white"
+                            >
+                              {app.isOpen ? "Hide" : "Show"}
+                            </button>
 
-                              <button
-                                onClick={() => deleteTopic(topic.id)}
-                                className="rounded bg-red-700 px-2 py-1 text-xs text-white"
-                              >
-                                Delete
-                              </button>
-                            </div>
+                            <button
+                              onClick={() => deleteApplication(app.id)}
+                              className="rounded bg-red-700 px-3 py-1 text-sm text-white"
+                            >
+                              Delete
+                            </button>
                           </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+
+                  {applications.length === 0 && (
+                    <div className="rounded-xl bg-white p-4 text-center text-stone-600">
+                      No application links yet.
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
