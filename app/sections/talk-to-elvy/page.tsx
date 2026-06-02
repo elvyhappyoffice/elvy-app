@@ -18,8 +18,7 @@ const defaultApplications: ApplicationLink[] = [
   {
     id: "elvy-mobile-app",
     name: "Elvy Mobile Application",
-    description:
-      "Create an account, activate your ticket, and communicate with Elvy through the mobile application.",
+    description: "Create an account and talk with Elvy.",
     url: "/mobile",
     isOpen: true,
     sortOrder: 1,
@@ -27,7 +26,7 @@ const defaultApplications: ApplicationLink[] = [
   {
     id: "android-application",
     name: "Android Application",
-    description: "Available later on Google Play.",
+    description: "Coming soon.",
     url: "",
     isOpen: true,
     sortOrder: 2,
@@ -46,6 +45,28 @@ function safeParse<T>(value: string | null, fallback: T): T {
 
 function sortApplications(apps: ApplicationLink[]) {
   return [...apps].sort((a, b) => a.sortOrder - b.sortOrder);
+}
+
+function cleanApplicationText(apps: ApplicationLink[]) {
+  return apps.map((app) => {
+    if (app.id === "elvy-mobile-app") {
+      return {
+        ...app,
+        name: "Elvy Mobile Application",
+        description: "Create an account and talk with Elvy.",
+      };
+    }
+
+    if (app.id === "android-application") {
+      return {
+        ...app,
+        name: "Android Application",
+        description: "Coming soon.",
+      };
+    }
+
+    return app;
+  });
 }
 
 export default function ElvyApplicationsPage() {
@@ -72,10 +93,10 @@ export default function ElvyApplicationsPage() {
   useEffect(() => {
     const savedApplications = safeParse<ApplicationLink[]>(
       localStorage.getItem(APPLICATIONS_STORAGE_KEY),
-      defaultApplications
+      defaultApplications,
     );
 
-    setApplications(sortApplications(savedApplications));
+    setApplications(sortApplications(cleanApplicationText(savedApplications)));
 
     const savedRole = localStorage.getItem("adminRole");
     const room = localStorage.getItem("adminRoom");
@@ -83,14 +104,14 @@ export default function ElvyApplicationsPage() {
     setRole(savedRole);
     setIsAdmin(
       savedRole === "founder" ||
-        (savedRole === "admin" && room === "talk-to-elvy")
+        (savedRole === "admin" && room === "talk-to-elvy"),
     );
   }, []);
 
   useEffect(() => {
     localStorage.setItem(
       APPLICATIONS_STORAGE_KEY,
-      JSON.stringify(sortApplications(applications))
+      JSON.stringify(sortApplications(applications)),
     );
   }, [applications]);
 
@@ -150,9 +171,9 @@ export default function ElvyApplicationsPage() {
                 sortOrder: Math.max(1, editSortOrder),
                 isOpen: editIsOpen,
               }
-            : app
-        )
-      )
+            : app,
+        ),
+      ),
     );
 
     setEditingId(null);
@@ -163,7 +184,7 @@ export default function ElvyApplicationsPage() {
   }
 
   const visibleApplications = sortApplications(applications).filter(
-    (app) => app.isOpen
+    (app) => app.isOpen,
   );
 
   return (
@@ -211,42 +232,44 @@ export default function ElvyApplicationsPage() {
         )}
 
         <section
-          className="absolute top-[45px] w-[620px] max-w-[calc(100vw-40px)]"
+          className="absolute top-[36px] w-[620px] max-w-[calc(100vw-40px)]"
           style={{ left: "calc(43% + 60px)" }}
         >
           <div className="text-center">
-            <p className="text-sm font-bold uppercase tracking-[0.32em] text-[#8a4b24] drop-shadow-sm">
+            <p className="text-xs font-bold uppercase tracking-[0.34em] text-[#8a4b24] drop-shadow-sm">
               Welcome to
             </p>
 
-            <h1 className="mt-2 text-4xl font-black tracking-tight text-[#6f3719] drop-shadow-sm">
+            <h1 className="mt-1 text-3xl font-black tracking-tight text-[#6f3719] drop-shadow-sm">
               Elvy Applications
             </h1>
 
-            <p className="mx-auto mt-2 max-w-[430px] whitespace-pre-line text-base font-semibold leading-7 text-[#4f3524]">
-              {`Elvy Applications gives access to communication tools developed by Happy Office.
-
-Choose an application below to continue.`}
+            <p className="mx-auto mt-2 max-w-[430px] text-base font-semibold leading-6 text-[#4f3524]">
+              Choose an Elvy application to continue.
             </p>
           </div>
 
-          <div className="mt-3 flex flex-col gap-3">
+          <div className="mt-2 flex flex-col gap-2">
             {visibleApplications.length === 0 ? (
-              <div className="rounded-[24px] border border-[#d2a36f]/70 bg-[#fff7ec]/90 p-5 text-center font-semibold text-[#4a2d1f] shadow-xl backdrop-blur-sm">
+              <div className="rounded-[24px] border border-[#d2a36f]/70 bg-[#fff7ec]/90 p-4 text-center font-semibold text-[#4a2d1f] shadow-xl backdrop-blur-sm">
                 No application links are available at the moment.
               </div>
             ) : (
               visibleApplications.map((app) => (
                 <div
                   key={app.id}
-                  className="w-full rounded-[24px] border border-[#d4a06c]/75 bg-[#fff7ec]/90 p-5 shadow-2xl backdrop-blur-sm"
+                  className={`rounded-[24px] border border-[#d4a06c]/75 bg-[#fff7ec]/90 p-4 shadow-2xl backdrop-blur-sm ${
+                    app.id === "android-application"
+                      ? "mx-auto w-[500px] max-w-full"
+                      : "w-full"
+                  }`}
                 >
-                  <h2 className="text-2xl font-black text-[#6f3719]">
+                  <h2 className="text-xl font-black text-[#6f3719]">
                     {app.name}
                   </h2>
 
                   {app.description && (
-                    <p className="mt-3 min-h-[45px] text-sm font-semibold leading-6 text-[#573923]">
+                    <p className="mt-2 text-sm font-semibold leading-5 text-[#573923]">
                       {app.description}
                     </p>
                   )}
@@ -256,12 +279,12 @@ Choose an application below to continue.`}
                       href={app.url}
                       target={app.url.startsWith("http") ? "_blank" : "_self"}
                       rel="noopener noreferrer"
-                      className="mt-5 block w-full rounded-2xl bg-[#1f6b2b] px-5 py-3 text-center font-extrabold text-white shadow-lg transition hover:bg-[#185622] active:scale-[0.98]"
+                      className="mt-4 block w-full rounded-2xl bg-[#1f6b2b] px-5 py-3 text-center font-extrabold text-white shadow-lg transition hover:bg-[#185622] active:scale-[0.98]"
                     >
                       Open Elvy Application
                     </a>
                   ) : (
-                    <div className="mt-5 rounded-2xl bg-[#ecd2ad]/95 px-5 py-3 text-center font-extrabold text-[#6f3719] shadow-inner">
+                    <div className="mt-4 rounded-2xl bg-[#ecd2ad]/95 px-5 py-3 text-center font-extrabold text-[#6f3719] shadow-inner">
                       Coming Soon
                     </div>
                   )}
@@ -280,7 +303,8 @@ Choose an application below to continue.`}
                     Elvy Applications Control Center
                   </h2>
                   <p className="text-sm text-stone-600">
-                    Add, edit, describe, show, hide, or delete application links.
+                    Add, edit, describe, show, hide, or delete application
+                    links.
                   </p>
                 </div>
 
@@ -366,9 +390,7 @@ Choose an application below to continue.`}
 
                           <input
                             value={editDescription}
-                            onChange={(e) =>
-                              setEditDescription(e.target.value)
-                            }
+                            onChange={(e) => setEditDescription(e.target.value)}
                             className="rounded border p-2 md:col-span-2"
                           />
 
@@ -391,9 +413,7 @@ Choose an application below to continue.`}
                             <input
                               type="checkbox"
                               checked={editIsOpen}
-                              onChange={(e) =>
-                                setEditIsOpen(e.target.checked)
-                              }
+                              onChange={(e) => setEditIsOpen(e.target.checked)}
                             />
                             Show
                           </label>
@@ -447,8 +467,8 @@ Choose an application below to continue.`}
                                   prev.map((item) =>
                                     item.id === app.id
                                       ? { ...item, isOpen: !item.isOpen }
-                                      : item
-                                  )
+                                      : item,
+                                  ),
                                 )
                               }
                               className="rounded bg-stone-700 px-3 py-1 text-sm text-white"
