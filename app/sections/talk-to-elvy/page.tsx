@@ -211,7 +211,7 @@ export default function ElvyApplicationsPage() {
         )}
 
         <section
-          className="absolute top-[60px] w-[620px] max-w-[calc(100vw-40px)]"
+          className="absolute top-[45px] w-[620px] max-w-[calc(100vw-40px)]"
           style={{ left: "calc(43% + 60px)" }}
         >
           <div className="text-center">
@@ -230,7 +230,7 @@ Choose an application below to continue.`}
             </p>
           </div>
 
-          <div className="mt-7 flex flex-col gap-5">
+          <div className="mt-5 flex flex-col gap-4">
             {visibleApplications.length === 0 ? (
               <div className="rounded-[24px] border border-[#d2a36f]/70 bg-[#fff7ec]/90 p-5 text-center font-semibold text-[#4a2d1f] shadow-xl backdrop-blur-sm">
                 No application links are available at the moment.
