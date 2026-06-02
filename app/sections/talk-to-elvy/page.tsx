@@ -214,7 +214,7 @@ export default function ElvyApplicationsPage() {
         )}
 
         {isAdmin && (
-          <div className="absolute right-5 top-5 z-50 flex gap-2">
+          <div className="absolute right-5 top-5 z-50 flex gap-1">
             <button
               onClick={() => setShowAdminDashboard(true)}
               className="rounded-full bg-black px-4 py-2 text-white shadow-lg"
@@ -232,7 +232,7 @@ export default function ElvyApplicationsPage() {
         )}
 
         <section
-          className="absolute top-[70px] w-[520px] max-w-[calc(100vw-40px)]"
+          className="absolute top-[75px] w-[520px] max-w-[calc(100vw-40px)]"
           style={{ left: "calc(40% + 20px)" }}
         >
           <div className="text-left">
@@ -345,7 +345,7 @@ export default function ElvyApplicationsPage() {
                   />
                 </div>
 
-                <label className="mt-3 flex items-center gap-2 text-sm">
+                <label className="mt-3 flex items-center gap-1 text-sm">
                   <input
                     type="checkbox"
                     checked={newIsOpen}
@@ -402,7 +402,7 @@ export default function ElvyApplicationsPage() {
                             className="rounded border p-2"
                           />
 
-                          <label className="flex items-center gap-2 text-sm">
+                          <label className="flex items-center gap-1 text-sm">
                             <input
                               type="checkbox"
                               checked={editIsOpen}
@@ -446,7 +446,7 @@ export default function ElvyApplicationsPage() {
                             </div>
                           </div>
 
-                          <div className="flex flex-wrap gap-2">
+                          <div className="flex flex-wrap gap-1">
                             <button
                               onClick={() => startEdit(app)}
                               className="rounded bg-blue-600 px-3 py-1 text-sm text-white"
