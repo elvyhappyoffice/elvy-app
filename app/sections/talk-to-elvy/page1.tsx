@@ -232,37 +232,44 @@ export default function ElvyApplicationsPage() {
         )}
 
         <section
-          className="absolute top-[70px] w-[520px] max-w-[calc(100vw-40px)]"
-          style={{ left: "calc(40% + 20px)" }}
+          className="absolute top-[36px] w-[580px] max-w-[calc(100vw-40px)]"
+          style={{ left: "calc(40% + 35px)" }}
         >
-          <div className="text-left">
-            <p className="text-sm font-bold uppercase tracking-[0.34em] text-[#8a4b24] drop-shadow-sm">
-                   ___________Welcome to___________
+          <div className="text-center">
+            <p className="text-xs font-bold uppercase tracking-[0.34em] text-[#8a4b24] drop-shadow-sm">
+              Welcome to
             </p>
 
-            <h1 className="mt-1 text-4xl font-black tracking-tight text-[#6f3719] drop-shadow-sm">
+            <h1 className="mt-1 text-3xl font-black tracking-tight text-[#6f3719] drop-shadow-sm">
               Elvy Applications
             </h1>
 
-            <p className="mt-3 text-xl font-bold leading-7 text-[#4f3524]">
+            <p className="mx-auto mt-2 max-w-[430px] text-base font-semibold leading-6 text-[#4f3524]">
               Choose an Elvy application to continue.
             </p>
           </div>
 
-          <div className="mt-8 space-y-9 text-left">
+          <div className="mt-2 flex flex-col gap-2">
             {visibleApplications.length === 0 ? (
-              <div className="font-semibold text-[#4a2d1f]">
+              <div className="rounded-[24px] border border-[#d2a36f]/70 bg-[#fff7ec]/90 p-4 text-center font-semibold text-[#4a2d1f] shadow-xl backdrop-blur-sm">
                 No application links are available at the moment.
               </div>
             ) : (
               visibleApplications.map((app) => (
-                <div key={app.id}>
-                  <h2 className="text-3xl font-black text-[#3f1f10]">
+                <div
+                  key={app.id}
+                  className={`rounded-[24px] border border-[#d4a06c]/75 bg-[#fff7ec]/90 p-4 shadow-2xl backdrop-blur-sm ${
+                    app.id === "android-application"
+                      ? "mx-auto w-[420px] max-w-full"
+                      : "w-full"
+                  }`}
+                >
+                  <h2 className="text-xl font-black text-[#6f3719]">
                     {app.name}
                   </h2>
 
                   {app.description && (
-                    <p className="mt-3 text-xl font-semibold leading-7 text-[#3f2b1e]">
+                    <p className="mt-2 text-sm font-semibold leading-5 text-[#573923]">
                       {app.description}
                     </p>
                   )}
@@ -272,12 +279,12 @@ export default function ElvyApplicationsPage() {
                       href={app.url}
                       target={app.url.startsWith("http") ? "_blank" : "_self"}
                       rel="noopener noreferrer"
-                      className="mt-6 inline-block rounded-[22px] bg-[#1f7a32] px-16 py-4 text-center text-2xl font-black text-white shadow-xl transition hover:bg-[#186428] active:scale-[0.98]"
+                      className="mt-4 block w-full rounded-2xl bg-[#1f6b2b] px-5 py-3 text-center font-extrabold text-white shadow-lg transition hover:bg-[#185622] active:scale-[0.98]"
                     >
                       Open Elvy Application
                     </a>
                   ) : (
-                    <div className="mt-4 text-xl font-black text-[#1f7a32]">
+                    <div className="mt-4 rounded-2xl bg-[#ecd2ad]/95 px-5 py-3 text-center font-extrabold text-[#6f3719] shadow-inner">
                       Coming Soon
                     </div>
                   )}
