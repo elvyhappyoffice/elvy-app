@@ -211,8 +211,8 @@ export default function ElvyApplicationsPage() {
         )}
 
         <section
-          className="absolute top-[70px] w-[375px] max-w-[calc(100vw-40px)]"
-          style={{ left: "calc(35% + 100px)" }}
+          className="absolute top-[60px] w-[620px] max-w-[calc(100vw-40px)]"
+          style={{ left: "calc(43% + 60px)" }}
         >
           <div className="text-center">
             <p className="text-sm font-bold uppercase tracking-[0.32em] text-[#8a4b24] drop-shadow-sm">
