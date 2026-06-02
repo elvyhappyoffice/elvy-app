@@ -232,8 +232,8 @@ export default function ElvyApplicationsPage() {
         )}
 
         <section
-          className="absolute top-[36px] w-[620px] max-w-[calc(100vw-40px)]"
-          style={{ left: "calc(43% + 60px)" }}
+          className="absolute top-[36px] w-[580px] max-w-[calc(100vw-40px)]"
+          style={{ left: "calc(40% + 35px)" }}
         >
           <div className="text-center">
             <p className="text-xs font-bold uppercase tracking-[0.34em] text-[#8a4b24] drop-shadow-sm">
@@ -260,7 +260,7 @@ export default function ElvyApplicationsPage() {
                   key={app.id}
                   className={`rounded-[24px] border border-[#d4a06c]/75 bg-[#fff7ec]/90 p-4 shadow-2xl backdrop-blur-sm ${
                     app.id === "android-application"
-                      ? "mx-auto w-[500px] max-w-full"
+                      ? "mx-auto w-[420px] max-w-full"
                       : "w-full"
                   }`}
                 >
