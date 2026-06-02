@@ -223,14 +223,14 @@ export default function ElvyApplicationsPage() {
               Elvy Applications
             </h1>
 
-            <p className="mx-auto mt-4 max-w-[430px] whitespace-pre-line text-base font-semibold leading-7 text-[#4f3524]">
+            <p className="mx-auto mt-2 max-w-[430px] whitespace-pre-line text-base font-semibold leading-7 text-[#4f3524]">
               {`Elvy Applications gives access to communication tools developed by Happy Office.
 
 Choose an application below to continue.`}
             </p>
           </div>
 
-          <div className="mt-5 flex flex-col gap-4">
+          <div className="mt-3 flex flex-col gap-3">
             {visibleApplications.length === 0 ? (
               <div className="rounded-[24px] border border-[#d2a36f]/70 bg-[#fff7ec]/90 p-5 text-center font-semibold text-[#4a2d1f] shadow-xl backdrop-blur-sm">
                 No application links are available at the moment.
