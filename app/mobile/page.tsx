@@ -64,6 +64,19 @@ export default function MobileElvyPage() {
 
   const inputRef = useRef<HTMLInputElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const recognitionRef = useRef<any>(null);
+
+  const [isListening, setIsListening] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [speakingMessageIndex, setSpeakingMessageIndex] = useState<number | null>(null);
+  const [voiceMode, setVoiceMode] = useState(false);
+  const speechSupported =
+  typeof window !== "undefined" &&
+  (
+    (window as any).SpeechRecognition ||
+    (window as any).webkitSpeechRecognition
+  );
+  const [speechWarningShown, setSpeechWarningShown] = useState(false);
 
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -92,6 +105,7 @@ export default function MobileElvyPage() {
             text: `Welcome back, ${parsed.displayName || parsed.username}.`,
           },
         ]);
+        setChatOpen(true);
       }
     } catch {
       localStorage.removeItem(ELVY_ACCOUNT_KEY);
@@ -216,6 +230,24 @@ useEffect(() => {
 
   return () => clearInterval(interval);
 }, [account]);
+
+  useEffect(() => {
+    return () => {
+      try {
+        recognitionRef.current?.stop?.();
+      } catch {
+        // Ignore cleanup errors.
+      }
+
+      try {
+        window.speechSynthesis?.cancel?.();
+        setIsSpeaking(false);
+        setSpeakingMessageIndex(null);
+      } catch {
+        // Ignore cleanup errors.
+      }
+    };
+  }, []);
 
   function openTalkToElvy() {
     setShowTerms(true);
@@ -404,8 +436,125 @@ setActivationMessage("Elvy is activated.");
     }
   }
 
-  async function sendMessage() {
-    const text = input.trim();
+  function startVoiceInput() {
+    if (isSending || isListening) return;
+
+    const SpeechRecognition =
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition;
+
+if (!SpeechRecognition) {
+  if (!speechWarningShown) {
+    setMessages((prev) => [
+      ...prev,
+      {
+        sender: "elvy",
+        text: "Speech recognition is not supported on this browser. You can still type your message.",
+      },
+    ]);
+
+    setSpeechWarningShown(true);
+  }
+
+  return;
+}
+
+    try {
+      const recognition = new SpeechRecognition();
+
+      recognition.lang = "en-US";
+      recognition.interimResults = false;
+      recognition.maxAlternatives = 1;
+
+      recognitionRef.current = recognition;
+
+      recognition.onstart = () => {
+        setIsListening(true);
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+      };
+
+      recognition.onerror = () => {
+        setIsListening(false);
+        setMessages((prev) => [
+          ...prev,
+          {
+            sender: "elvy",
+            text: "I could not hear clearly. Please try again or type your message.",
+          },
+        ]);
+      };
+
+      recognition.onresult = (event: any) => {
+        const transcript = event.results?.[0]?.[0]?.transcript || "";
+        const cleanTranscript = transcript.trim();
+
+        if (cleanTranscript) {
+          setInput(cleanTranscript);
+          inputRef.current?.focus();
+
+          if (voiceMode) {
+            window.setTimeout(() => {
+              sendMessage(cleanTranscript);
+            }, 1200);
+          }
+        }
+      };
+
+      recognition.start();
+    } catch {
+      setIsListening(false);
+      setMessages((prev) => [
+        ...prev,
+        {
+          sender: "elvy",
+          text: "Microphone access could not start. Please check your browser permission or type your message.",
+        },
+      ]);
+    }
+  }
+
+  function speakText(text: string, messageIndex: number) {
+    if (typeof window === "undefined") return;
+
+    const synth = window.speechSynthesis;
+    if (!synth) return;
+
+    if (synth.speaking) {
+      synth.cancel();
+      setIsSpeaking(false);
+      setSpeakingMessageIndex(null);
+      return;
+    }
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "en-US";
+    utterance.rate = 0.95;
+    utterance.pitch = 1;
+
+    utterance.onstart = () => {
+      setIsSpeaking(true);
+      setSpeakingMessageIndex(messageIndex);
+    };
+
+    utterance.onend = () => {
+      setIsSpeaking(false);
+      setSpeakingMessageIndex(null);
+    };
+
+    utterance.onerror = () => {
+      setIsSpeaking(false);
+      setSpeakingMessageIndex(null);
+    };
+
+    synth.cancel();
+    synth.speak(utterance);
+  }
+
+  async function sendMessage(messageOverride?: string) {
+    const text = (messageOverride ?? input).trim();
     if (!text || isSending) return;
 
     setMessages((prev) => [...prev, { sender: "user", text }]);
@@ -467,7 +616,13 @@ setActivationMessage("Elvy is activated.");
           code: codeToSend,
           freeTrialCode: account?.userCode || freeTrialCode,
           freeTrialMode: freeModeAllowed,
-          recentMessages: messages.slice(-6),
+          recentMessages: [
+            ...messages,
+            {
+              sender: "user",
+              text,
+            },
+          ].slice(-14),
         }),
       });
 
@@ -483,6 +638,14 @@ setActivationMessage("Elvy is activated.");
           text: aiReply,
         },
       ]);
+
+      if (voiceMode) {
+        const nextElvyMessageIndex = messages.length + 1;
+
+        window.setTimeout(() => {
+          speakText(aiReply, nextElvyMessageIndex);
+        }, 250);
+      }
 
       setIsSending(false);
 
@@ -523,7 +686,7 @@ setActivationMessage("Elvy is activated.");
           className="absolute inset-0 h-full w-full object-cover"
         />
 
-        {!chatOpen && !showTerms && !showAccountForm && (
+        {!account && !chatOpen && !showTerms && !showAccountForm && (
           <>
             <button
               onClick={openTalkToElvy}
@@ -702,28 +865,59 @@ setActivationMessage("Elvy is activated.");
 
         {chatOpen && (
           <div
-            className="absolute left-0 right-0 bottom-0 z-50 flex flex-col overflow-hidden rounded-none border-t border-[#d8b98f] bg-[#fff4e5]/94 shadow-[0_-10px_28px_rgba(72,45,25,0.18)] backdrop-blur-md"
+            className="absolute z-50 flex flex-col overflow-hidden"
             style={{
-              top: "45%",
+              left: "14px",
+              right: "14px",
+              top: "47%",
+              bottom: "18px",
+              borderRadius: "26px",
+              background: "rgba(255, 244, 229, 0.96)",
+              border: "1px solid rgba(216, 185, 143, 0.75)",
+              boxShadow: "0 18px 38px rgba(72, 45, 25, 0.24)",
+              backdropFilter: "blur(8px)",
+              WebkitBackdropFilter: "blur(8px)",
+              padding: "14px 14px 12px 14px",
             }}
           >
-            <div className="mb-2 flex items-center justify-between">
-              <div>
-                <h2 className="text-base font-bold text-[#3b2418]">
+            <div
+              className="flex shrink-0 items-start justify-between"
+              style={{
+                paddingBottom: "10px",
+                borderBottom: "1px solid rgba(216, 185, 143, 0.85)",
+                gap: "8px",
+              }}
+            >
+              <div style={{ minWidth: 0, paddingLeft: "2px" }}>
+                <h2
+                  className="font-bold text-[#3b2418]"
+                  style={{
+                    fontSize: "15px",
+                    lineHeight: "20px",
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    maxWidth: "190px",
+                  }}
+                >
                   {account ? `Talk to Elvy · ${account.displayName}` : "Talk to Elvy"}
                 </h2>
                 {isActivated && (
-                  <p className="text-[11px] font-bold text-green-700">
+                  <p
+                    className="font-bold text-green-700"
+                    style={{ fontSize: "12px", lineHeight: "18px" }}
+                  >
                     Active · {repliesLeft} credits left
                   </p>
                 )}
               </div>
 
-              <div className="flex gap-2">
+              <div className="flex shrink-0 items-center" style={{ gap: "6px" }}>
                 {account && (
                   <button
                     onClick={logoutAccount}
-                    className="rounded-full bg-[#f1e1cf] px-3 py-1 text-xs text-[#4a2d1f]"
+                    className="rounded-full bg-[#f1e1cf] text-[#4a2d1f]"
+                    style={{ padding: "6px 10px", fontSize: "11px" }}
                   >
                     Logout
                   </button>
@@ -731,34 +925,69 @@ setActivationMessage("Elvy is activated.");
 
                 <button
                   onClick={() => setChatOpen(false)}
-                  className="rounded-full bg-[#f1e1cf] px-3 py-1 text-xs text-[#4a2d1f]"
+                  className="rounded-full bg-[#f1e1cf] text-[#4a2d1f]"
+                  style={{ padding: "6px 10px", fontSize: "11px" }}
                 >
                   Close
                 </button>
               </div>
             </div>
 
-            <div className="mb-3 flex-1 space-y-2 overflow-y-auto rounded-none border border-[#e2c49c] bg-[#fff8ef]/70 p-3">
+            <div
+              className="min-h-0 flex-1 space-y-3 overflow-y-auto"
+              style={{
+                padding: "16px 4px 10px 4px",
+                background: "transparent",
+                scrollbarWidth: "thin",
+                scrollbarColor: "rgba(166, 124, 82, 0.35) transparent",
+              }}
+            >
               {messages.map((msg, index) => (
                 <div
                   key={index}
-                  className={`max-w-[78%] px-4 py-3 text-sm leading-6 ${
+                  className={`max-w-[82%] px-4 py-3 text-sm leading-6 ${
                     msg.sender === "elvy"
                       ? "mr-auto rounded-[22px] bg-white text-[#2b1a12] font-medium shadow-[0_3px_10px_rgba(0,0,0,0.08)]"
                       : "ml-auto rounded-[22px] border border-[#7fc2ff] bg-[#cfe9ff] text-[16px] font-bold text-[#11314d] shadow-[0_4px_12px_rgba(80,160,255,0.18)]"
                   }`}
                 >
-                  {msg.text}
+                  <div>{msg.text}</div>
+
+                  {msg.sender === "elvy" && (
+                    <button
+                      type="button"
+                      onClick={() => speakText(msg.text, index)}
+                      className="mt-2 inline-flex items-center rounded-full bg-[#eef7ff] px-3 py-1 text-[12px] font-bold text-[#1d7fe2] shadow-sm transition-all active:scale-[0.98]"
+                      style={{ border: "1px solid rgba(29, 127, 226, 0.22)" }}
+                    >
+                      {isSpeaking && speakingMessageIndex === index ? (
+                        <>
+                          <span>🔊</span>
+                          <span
+                            style={{
+                              marginLeft: "6px",
+                              color: "#118a3b",
+                              fontSize: "10px",
+                              fontWeight: 600,
+                              opacity: 0.85,
+                            }}
+                          >
+                            Elvy is speaking...
+                          </span>
+                        </>
+                      ) : (
+                        "🔊 Listen"
+                      )}
+                    </button>
+                  )}
                 </div>
               ))}
 
               {isSending && (
-                <div className="mr-auto max-w-[78%] rounded-2xl bg-white/90 px-3 py-2 text-sm font-medium leading-5 text-[#2b1a12] shadow-sm">
+                <div className="mr-auto max-w-[82%] rounded-2xl bg-white/90 px-3 py-2 text-sm font-medium leading-5 text-[#2b1a12] shadow-sm">
                   Elvy is replying...
                 </div>
               )}
-
-              <div ref={messagesEndRef} />
 
               {showTicketInfo && (
                 <div className="rounded-2xl bg-[#f7eadb] p-3 text-sm text-[#3b2418]">
@@ -835,9 +1064,28 @@ setActivationMessage("Elvy is activated.");
                   )}
                 </div>
               )}
+
+              {isListening && (
+                <div
+                  className="mx-auto rounded-full bg-[#fff8ef] px-4 py-2 text-center text-xs font-bold text-[#118a3b] shadow-sm"
+                  style={{ border: "1px solid rgba(31, 107, 43, 0.25)" }}
+                >
+                  Listening... speak now
+                </div>
+              )}
+
+
+              <div ref={messagesEndRef} />
             </div>
 
-            <div className="mt-3 flex items-center gap-3">
+            <div
+              className="flex shrink-0 items-center"
+              style={{
+                gap: "10px",
+                paddingTop: "10px",
+                borderTop: "1px solid rgba(226, 196, 156, 0.75)",
+              }}
+            >
               <input
                 ref={inputRef}
                 value={input}
@@ -847,25 +1095,123 @@ setActivationMessage("Elvy is activated.");
                   if (e.key === "Enter") sendMessage();
                 }}
                 type="text"
-                placeholder={isSending ? "Elvy is replying..." : "Write..."}
-                className="min-w-0 flex-[1.4] rounded-none border border-[#d8b98f] bg-white px-5 py-4 text-[15px] font-medium text-[#2b1a12] shadow-sm outline-none placeholder:text-[#9a8d80]"
+                placeholder={
+                  isSending
+                    ? "Elvy is replying..."
+                    : isListening
+                      ? "Listening... speak now"
+                      : "Write..."
+                }
+                className="min-w-0 flex-1 bg-white text-[#2b1a12] outline-none placeholder:text-[#9a8d80]"
+                style={{
+                  height: "54px",
+                  borderRadius: "24px",
+                  border: "1px solid rgba(216, 185, 143, 0.75)",
+                  padding: "0 18px",
+                  fontSize: "15px",
+                  fontWeight: 500,
+                  boxShadow: "0 4px 12px rgba(72,45,25,0.08)",
+                }}
               />
 
               <button
                 type="button"
-                onClick={sendMessage}
-                disabled={isSending}
-                className="shrink-0 rounded-none border border-[#1d7fe2] bg-[#1d7fe2] px-5 py-4 text-[15px] font-extrabold text-white shadow-md transition-all active:scale-[0.98]"
+                onClick={startVoiceInput}
+                disabled={isSending || isListening}
+                className="flex shrink-0 items-center justify-center rounded-full text-white shadow-md transition-all active:scale-[0.98]"
                 style={{
+                  width: "54px",
+                  height: "54px",
+                  backgroundColor: isListening ? "#dc2626" : "#118a3b",
+                  border: "1px solid rgba(31,107,43,0.75)",
+                  fontSize: "22px",
+                  opacity: isSending ? 0.7 : 1,
+                  animation: isListening ? "pulse 1.2s infinite" : "none",
+                }}
+                title="Speak to Elvy"
+              >
+                {isListening ? "🔴" : "🎤"}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => sendMessage()}
+                disabled={isSending}
+                className="shrink-0 rounded-full text-white shadow-md transition-all active:scale-[0.98]"
+                style={{
+                  height: "54px",
+                  minWidth: "72px",
+                  padding: "0 18px",
+                  border: "1px solid #1d7fe2",
                   backgroundColor: isSending ? "#9fc8ef" : "#1d7fe2",
-                  color: "#ffffff",
-                  minWidth: "70px",
+                  fontSize: "15px",
+                  fontWeight: 800,
                   opacity: isSending ? 0.7 : 1,
                 }}
               >
                 {isSending ? "Wait" : "Send"}
               </button>
             </div>
+<div className="pt-1 text-center">
+  {!isListening && !input.trim() && !isSending && (
+    <div
+      className="text-center font-medium"
+      style={{
+        color: "#1d7fe2",
+        fontSize: "9px",
+        opacity: 0.65,
+        lineHeight: "12px",
+      }}
+    >
+      Tap 🎤 to speak or type your message
+    </div>
+  )}
+
+  <button
+    type="button"
+    onClick={() => setVoiceMode((prev) => !prev)}
+    className="mt-1 inline-flex items-center justify-center rounded-full transition-all active:scale-[0.98]"
+    style={{
+      background: "transparent",
+      border: "none",
+      cursor: "pointer",
+      fontSize: "10px",
+      fontWeight: 800,
+      lineHeight: "14px",
+      padding: "0",
+    }}
+    aria-label={voiceMode ? "Turn voice mode off" : "Turn voice mode on"}
+    title={voiceMode ? "Voice Mode ON" : "Voice Mode OFF"}
+  >
+    <span
+      style={{
+        color: voiceMode ? "#8a7563" : "#dc2626",
+        opacity: voiceMode ? 0.7 : 1,
+      }}
+    >
+      OFF
+    </span>
+    <span style={{ margin: "0 5px", fontSize: "11px" }}>🔘</span>
+    <span
+      style={{
+        color: "#3b2418",
+        margin: "0 2px",
+        letterSpacing: "0.2px",
+      }}
+    >
+      VOICE MODE
+    </span>
+    <span style={{ margin: "0 5px", fontSize: "11px" }}>🔘</span>
+    <span
+      style={{
+        color: voiceMode ? "#118a3b" : "#8a7563",
+        opacity: voiceMode ? 1 : 0.7,
+      }}
+    >
+      ON
+    </span>
+  </button>
+</div>
           </div>
         )}
       </div>
