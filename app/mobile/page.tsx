@@ -516,6 +516,91 @@ if (!SpeechRecognition) {
     }
   }
 
+  function detectSpeechLanguage(text: string) {
+    const cleanText = text.toLowerCase();
+
+    if (/[\u0600-\u06FF]/.test(text)) return "ar";
+    if (/[\u4E00-\u9FFF]/.test(text)) return "zh";
+    if (/[\u3040-\u30FF]/.test(text)) return "ja";
+    if (/[\uAC00-\uD7AF]/.test(text)) return "ko";
+    if (/[\u0400-\u04FF]/.test(text)) return "ru";
+    if (/[\u0370-\u03FF]/.test(text)) return "el";
+    if (/[\u0590-\u05FF]/.test(text)) return "he";
+    if (/[\u0E00-\u0E7F]/.test(text)) return "th";
+
+    if (
+      /[àâäéèêëîïôöùûüÿçœ]/i.test(text) ||
+      /\b(bonjour|merci|salut|comment|vous|être|avec|pourquoi|parce que|aujourd'hui|français|francaise)\b/i.test(cleanText)
+    ) {
+      return "fr";
+    }
+
+    if (
+      /[ñ¿¡áéíóúü]/i.test(text) ||
+      /\b(hola|gracias|buenos|buenas|como|cómo|usted|español|porque|mañana)\b/i.test(cleanText)
+    ) {
+      return "es";
+    }
+
+    if (
+      /[äöüß]/i.test(text) ||
+      /\b(hallo|danke|guten|guten tag|ich|nicht|deutsch|bitte|warum)\b/i.test(cleanText)
+    ) {
+      return "de";
+    }
+
+    if (
+      /\b(ciao|grazie|buongiorno|buonasera|italiano|perché|come stai|arrivederci)\b/i.test(cleanText)
+    ) {
+      return "it";
+    }
+
+    if (
+      /[ãõ]/i.test(text) ||
+      /\b(olá|ola|obrigado|obrigada|português|portugues|bom dia|boa tarde|porque)\b/i.test(cleanText)
+    ) {
+      return "pt";
+    }
+
+    return "en";
+  }
+
+  function chooseVoiceForLanguage(
+    voices: SpeechSynthesisVoice[],
+    languageCode: string
+  ) {
+    const lowerLanguage = languageCode.toLowerCase();
+
+    const exactLanguageVoice = voices.find((voice) =>
+      voice.lang.toLowerCase().startsWith(lowerLanguage)
+    );
+
+    if (exactLanguageVoice) return exactLanguageVoice;
+
+    if (lowerLanguage === "en") {
+      return (
+        voices.find((voice) =>
+          voice.name.toLowerCase().includes("david")
+        ) ||
+        voices.find((voice) =>
+          voice.name.toLowerCase().includes("mark")
+        ) ||
+        voices.find((voice) =>
+          voice.name.toLowerCase().includes("male")
+        ) ||
+        voices.find((voice) =>
+          voice.lang.toLowerCase().startsWith("en")
+        )
+      );
+    }
+
+    return (
+      voices.find((voice) =>
+        voice.lang.toLowerCase().startsWith("en")
+      ) || null
+    );
+  }
+
   function speakText(text: string, messageIndex: number) {
     if (typeof window === "undefined") return;
 
@@ -529,10 +614,38 @@ if (!SpeechRecognition) {
       return;
     }
 
+    const detectedLanguage = detectSpeechLanguage(text);
+    const voices = synth.getVoices();
+    const preferredVoice = chooseVoiceForLanguage(voices, detectedLanguage);
+
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = "en-US";
-    utterance.rate = 0.95;
-    utterance.pitch = 1;
+
+    if (preferredVoice) {
+      utterance.voice = preferredVoice;
+      utterance.lang = preferredVoice.lang;
+    } else {
+      const fallbackLanguageMap: Record<string, string> = {
+        ar: "ar-SA",
+        fr: "fr-FR",
+        es: "es-ES",
+        de: "de-DE",
+        it: "it-IT",
+        pt: "pt-PT",
+        zh: "zh-CN",
+        ja: "ja-JP",
+        ko: "ko-KR",
+        ru: "ru-RU",
+        el: "el-GR",
+        he: "he-IL",
+        th: "th-TH",
+        en: "en-US",
+      };
+
+      utterance.lang = fallbackLanguageMap[detectedLanguage] || "en-US";
+    }
+
+    utterance.rate = 0.9;
+    utterance.pitch = detectedLanguage === "en" ? 0.85 : 1;
 
     utterance.onstart = () => {
       setIsSpeaking(true);
