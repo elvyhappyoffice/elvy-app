@@ -69,6 +69,8 @@ export default function MobileElvyPage() {
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [speakingMessageIndex, setSpeakingMessageIndex] = useState<number | null>(null);
+  const [speakingCharIndex, setSpeakingCharIndex] = useState<number | null>(null);
+  const [speakingWordLength, setSpeakingWordLength] = useState(0);
   const [voiceMode, setVoiceMode] = useState(false);
   const speechSupported =
   typeof window !== "undefined" &&
@@ -77,6 +79,7 @@ export default function MobileElvyPage() {
     (window as any).webkitSpeechRecognition
   );
   const [speechWarningShown, setSpeechWarningShown] = useState(false);
+  const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
 
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -232,6 +235,27 @@ useEffect(() => {
 }, [account]);
 
   useEffect(() => {
+    if (typeof window === "undefined" || !window.speechSynthesis) return;
+
+    const loadVoices = () => {
+      const voices = window.speechSynthesis.getVoices();
+      if (voices.length > 0) {
+        setAvailableVoices(voices);
+      }
+    };
+
+    loadVoices();
+
+    window.speechSynthesis.onvoiceschanged = loadVoices;
+
+    return () => {
+      if (window.speechSynthesis.onvoiceschanged === loadVoices) {
+        window.speechSynthesis.onvoiceschanged = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     return () => {
       try {
         recognitionRef.current?.stop?.();
@@ -243,6 +267,8 @@ useEffect(() => {
         window.speechSynthesis?.cancel?.();
         setIsSpeaking(false);
         setSpeakingMessageIndex(null);
+        setSpeakingCharIndex(null);
+        setSpeakingWordLength(0);
       } catch {
         // Ignore cleanup errors.
       }
@@ -527,6 +553,9 @@ if (!SpeechRecognition) {
     if (/[\u0370-\u03FF]/.test(text)) return "el";
     if (/[\u0590-\u05FF]/.test(text)) return "he";
     if (/[\u0E00-\u0E7F]/.test(text)) return "th";
+    if (/[\u0900-\u097F]/.test(text)) return "hi";
+    if (/[\u0980-\u09FF]/.test(text)) return "bn";
+    if (/[\u0E80-\u0EFF]/.test(text)) return "lo";
 
     if (
       /[àâäéèêëîïôöùûüÿçœ]/i.test(text) ||
@@ -565,40 +594,126 @@ if (!SpeechRecognition) {
     return "en";
   }
 
+  function getFallbackSpeechLang(languageCode: string) {
+    const fallbackLanguageMap: Record<string, string> = {
+      ar: "ar-SA",
+      fr: "fr-FR",
+      es: "es-ES",
+      de: "de-DE",
+      it: "it-IT",
+      pt: "pt-PT",
+      zh: "zh-CN",
+      ja: "ja-JP",
+      ko: "ko-KR",
+      ru: "ru-RU",
+      el: "el-GR",
+      he: "he-IL",
+      th: "th-TH",
+      hi: "hi-IN",
+      bn: "bn-BD",
+      lo: "lo-LA",
+      en: "en-US",
+    };
+
+    return fallbackLanguageMap[languageCode] || "en-US";
+  }
+
   function chooseVoiceForLanguage(
     voices: SpeechSynthesisVoice[],
     languageCode: string
   ) {
     const lowerLanguage = languageCode.toLowerCase();
+    const preferredLang = getFallbackSpeechLang(lowerLanguage).toLowerCase();
 
-    const exactLanguageVoice = voices.find((voice) =>
-      voice.lang.toLowerCase().startsWith(lowerLanguage)
-    );
-
-    if (exactLanguageVoice) return exactLanguageVoice;
+    const voiceNameIncludes = (voice: SpeechSynthesisVoice, pattern: string) =>
+      voice.name.toLowerCase().includes(pattern);
 
     if (lowerLanguage === "en") {
       return (
         voices.find((voice) =>
-          voice.name.toLowerCase().includes("david")
+          voice.lang.toLowerCase() === "en-us" &&
+          (voiceNameIncludes(voice, "david") ||
+            voiceNameIncludes(voice, "mark") ||
+            voiceNameIncludes(voice, "george") ||
+            voiceNameIncludes(voice, "male"))
         ) ||
         voices.find((voice) =>
-          voice.name.toLowerCase().includes("mark")
+          voiceNameIncludes(voice, "david") ||
+          voiceNameIncludes(voice, "mark") ||
+          voiceNameIncludes(voice, "george") ||
+          voiceNameIncludes(voice, "male")
         ) ||
-        voices.find((voice) =>
-          voice.name.toLowerCase().includes("male")
-        ) ||
-        voices.find((voice) =>
-          voice.lang.toLowerCase().startsWith("en")
-        )
+        voices.find((voice) => voice.lang.toLowerCase().startsWith("en")) ||
+        null
+      );
+    }
+
+    if (lowerLanguage === "ar") {
+      return (
+        voices.find((voice) => voice.lang.toLowerCase() === "ar-ma") ||
+        voices.find((voice) => voice.lang.toLowerCase() === "ar-sa") ||
+        voices.find((voice) => voice.lang.toLowerCase() === "ar-eg") ||
+        voices.find((voice) => voice.lang.toLowerCase().startsWith("ar")) ||
+        voices.find((voice) => voiceNameIncludes(voice, "arabic")) ||
+        voices.find((voice) => voiceNameIncludes(voice, "arab")) ||
+        null
       );
     }
 
     return (
-      voices.find((voice) =>
-        voice.lang.toLowerCase().startsWith("en")
-      ) || null
+      voices.find((voice) => voice.lang.toLowerCase() === preferredLang) ||
+      voices.find((voice) => voice.lang.toLowerCase().startsWith(lowerLanguage)) ||
+      null
     );
+  }
+
+  function renderMessageText(text: string, messageIndex: number) {
+    if (
+      !isSpeaking ||
+      speakingMessageIndex !== messageIndex ||
+      speakingCharIndex === null
+    ) {
+      return text;
+    }
+
+    const parts = text.match(/\S+|\s+/g) || [text];
+    let currentIndex = 0;
+
+    return parts.map((part, partIndex) => {
+      const start = currentIndex;
+      const end = start + part.length;
+      currentIndex = end;
+
+      const isWord = /\S/.test(part);
+      const activeEnd =
+        speakingWordLength > 0
+          ? speakingCharIndex + speakingWordLength
+          : speakingCharIndex + 1;
+
+      const isActiveWord =
+        isWord &&
+        speakingCharIndex < end &&
+        activeEnd > start;
+
+      return (
+        <span
+          key={`${messageIndex}-${partIndex}-${start}`}
+          style={
+            isActiveWord
+              ? {
+                  backgroundColor: "#d9fdd3",
+                  color: "#12351c",
+                  borderRadius: "6px",
+                  padding: "0 3px",
+                  transition: "background-color 0.12s ease",
+                }
+              : undefined
+          }
+        >
+          {part}
+        </span>
+      );
+    });
   }
 
   function speakText(text: string, messageIndex: number) {
@@ -611,11 +726,14 @@ if (!SpeechRecognition) {
       synth.cancel();
       setIsSpeaking(false);
       setSpeakingMessageIndex(null);
+      setSpeakingCharIndex(null);
+      setSpeakingWordLength(0);
       return;
     }
 
     const detectedLanguage = detectSpeechLanguage(text);
-    const voices = synth.getVoices();
+    const voicesFromBrowser = synth.getVoices();
+    const voices = voicesFromBrowser.length > 0 ? voicesFromBrowser : availableVoices;
     const preferredVoice = chooseVoiceForLanguage(voices, detectedLanguage);
 
     const utterance = new SpeechSynthesisUtterance(text);
@@ -624,43 +742,51 @@ if (!SpeechRecognition) {
       utterance.voice = preferredVoice;
       utterance.lang = preferredVoice.lang;
     } else {
-      const fallbackLanguageMap: Record<string, string> = {
-        ar: "ar-SA",
-        fr: "fr-FR",
-        es: "es-ES",
-        de: "de-DE",
-        it: "it-IT",
-        pt: "pt-PT",
-        zh: "zh-CN",
-        ja: "ja-JP",
-        ko: "ko-KR",
-        ru: "ru-RU",
-        el: "el-GR",
-        he: "he-IL",
-        th: "th-TH",
-        en: "en-US",
-      };
-
-      utterance.lang = fallbackLanguageMap[detectedLanguage] || "en-US";
+      utterance.lang = getFallbackSpeechLang(detectedLanguage);
     }
 
-    utterance.rate = 0.9;
+    utterance.rate = detectedLanguage === "ar" ? 0.82 : 0.9;
     utterance.pitch = detectedLanguage === "en" ? 0.85 : 1;
 
     utterance.onstart = () => {
       setIsSpeaking(true);
       setSpeakingMessageIndex(messageIndex);
+      setSpeakingCharIndex(null);
+      setSpeakingWordLength(0);
+    };
+
+    utterance.onboundary = (event) => {
+      if (typeof event.charIndex === "number") {
+        setSpeakingCharIndex(event.charIndex);
+        const boundaryLength =
+          typeof (event as SpeechSynthesisEvent & { charLength?: number }).charLength ===
+          "number"
+            ? (event as SpeechSynthesisEvent & { charLength?: number }).charLength || 0
+            : 0;
+
+        setSpeakingWordLength(boundaryLength);
+      }
     };
 
     utterance.onend = () => {
       setIsSpeaking(false);
       setSpeakingMessageIndex(null);
+      setSpeakingCharIndex(null);
+      setSpeakingWordLength(0);
     };
 
-    utterance.onerror = () => {
-      setIsSpeaking(false);
-      setSpeakingMessageIndex(null);
-    };
+utterance.onend = () => {
+  setIsSpeaking(false);
+  setSpeakingMessageIndex(null);
+  setSpeakingCharIndex(null);
+  setSpeakingWordLength(0);
+
+  if (voiceMode && chatOpen && !isSending) {
+    window.setTimeout(() => {
+      startVoiceInput();
+    }, 700);
+  }
+};
 
     synth.cancel();
     synth.speak(utterance);
@@ -1058,41 +1184,126 @@ if (!SpeechRecognition) {
               {messages.map((msg, index) => (
                 <div
                   key={index}
-                  className={`max-w-[82%] px-4 py-3 text-sm leading-6 ${
+                  className={
                     msg.sender === "elvy"
-                      ? "mr-auto rounded-[22px] bg-white text-[#2b1a12] font-medium shadow-[0_3px_10px_rgba(0,0,0,0.08)]"
-                      : "ml-auto rounded-[22px] border border-[#7fc2ff] bg-[#cfe9ff] text-[16px] font-bold text-[#11314d] shadow-[0_4px_12px_rgba(80,160,255,0.18)]"
-                  }`}
+                      ? "mr-auto flex max-w-[96%] items-start gap-2"
+                      : "ml-auto max-w-[82%]"
+                  }
                 >
-                  <div>{msg.text}</div>
+{msg.sender === "elvy" && (
+  <div
+    style={{
+      position: "relative",
+      width: "56px",
+      height: "76px",
+      flexShrink: 0,
+      marginTop: "2px",
+    }}
+  >
+    {isSpeaking && speakingMessageIndex === index && (
+      <>
+        <span
+          style={{
+            position: "absolute",
+            right: "-8px",
+            top: "18px",
+            width: "10px",
+            height: "10px",
+            borderRadius: "50%",
+            background: "#22c55e",
+            animation: "elvyWave 1s infinite",
+          }}
+        />
 
-                  {msg.sender === "elvy" && (
-                    <button
-                      type="button"
-                      onClick={() => speakText(msg.text, index)}
-                      className="mt-2 inline-flex items-center rounded-full bg-[#eef7ff] px-3 py-1 text-[12px] font-bold text-[#1d7fe2] shadow-sm transition-all active:scale-[0.98]"
-                      style={{ border: "1px solid rgba(29, 127, 226, 0.22)" }}
-                    >
-                      {isSpeaking && speakingMessageIndex === index ? (
-                        <>
-                          <span>🔊</span>
-                          <span
-                            style={{
-                              marginLeft: "6px",
-                              color: "#118a3b",
-                              fontSize: "10px",
-                              fontWeight: 600,
-                              opacity: 0.85,
-                            }}
-                          >
-                            Elvy is speaking...
-                          </span>
-                        </>
-                      ) : (
-                        "🔊 Listen"
-                      )}
-                    </button>
-                  )}
+        <span
+          style={{
+            position: "absolute",
+            right: "-18px",
+            top: "14px",
+            width: "18px",
+            height: "18px",
+            borderRadius: "50%",
+            border: "2px solid #22c55e",
+            animation: "elvyWave 1s infinite",
+          }}
+        />
+
+        <span
+          style={{
+            position: "absolute",
+            right: "-30px",
+            top: "10px",
+            width: "28px",
+            height: "28px",
+            borderRadius: "50%",
+            border: "2px solid #22c55e",
+            animation: "elvyWave 1s infinite",
+          }}
+        />
+      </>
+    )}
+
+    <img
+      src="/elvy-public.png"
+      alt="Elvy"
+      className="shrink-0"
+      style={{
+        width: "56px",
+        height: "76px",
+        objectFit: "contain",
+        background: "transparent",
+        border: "none",
+        boxShadow: "none",
+        filter:
+          isSpeaking && speakingMessageIndex === index
+            ? "drop-shadow(0 0 10px rgba(17,138,59,0.6))"
+            : "drop-shadow(0 3px 5px rgba(72,45,25,0.12))",
+        animation:
+          isSpeaking && speakingMessageIndex === index
+            ? "elvySpeakPulse 1.1s ease-in-out infinite"
+            : "none",
+      }}
+    />
+  </div>
+)}
+
+                  <div
+                    className={`px-4 py-3 text-sm leading-6 ${
+                      msg.sender === "elvy"
+                        ? "min-w-0 flex-1 rounded-[22px] bg-white text-[#2b1a12] font-medium shadow-[0_3px_10px_rgba(0,0,0,0.08)]"
+                        : "rounded-[22px] border border-[#7fc2ff] bg-[#cfe9ff] text-[16px] font-bold text-[#11314d] shadow-[0_4px_12px_rgba(80,160,255,0.18)]"
+                    }`}
+                  >
+                    <div>{renderMessageText(msg.text, index)}</div>
+
+                    {msg.sender === "elvy" && (
+                      <button
+                        type="button"
+                        onClick={() => speakText(msg.text, index)}
+                        className="mt-2 inline-flex items-center rounded-full bg-[#eef7ff] px-3 py-1 text-[12px] font-bold text-[#1d7fe2] shadow-sm transition-all active:scale-[0.98]"
+                        style={{ border: "1px solid rgba(29, 127, 226, 0.22)" }}
+                      >
+                        {isSpeaking && speakingMessageIndex === index ? (
+                          <>
+                            <span>🔊</span>
+                            <span
+                              style={{
+                                marginLeft: "6px",
+                                color: "#118a3b",
+                                fontSize: "10px",
+                                fontWeight: 600,
+                                opacity: 0.85,
+                              }}
+                            >
+                              Elvy is speaking...
+                            </span>
+                          </>
+                        ) : (
+                          "🔊 Listen"
+                        )}
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
 
@@ -1328,6 +1539,31 @@ if (!SpeechRecognition) {
           </div>
         )}
       </div>
+
+<style jsx>{`
+  @keyframes elvySpeakPulse {
+    0% { transform: translateY(0) scale(1); }
+    50% { transform: translateY(-2px) scale(1.03); }
+    100% { transform: translateY(0) scale(1); }
+  }
+
+  @keyframes elvyWave {
+    0% {
+      opacity: 0.35;
+      transform: scale(0.9);
+    }
+
+    50% {
+      opacity: 1;
+      transform: scale(1.15);
+    }
+
+    100% {
+      opacity: 0.35;
+      transform: scale(0.9);
+    }
+  }
+`}</style>
     </main>
   );
 }
