@@ -65,6 +65,8 @@ export default function MobileElvyPage() {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const recognitionRef = useRef<any>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioUrlRef = useRef<string | null>(null);
 
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -259,6 +261,17 @@ useEffect(() => {
     return () => {
       try {
         recognitionRef.current?.stop?.();
+      } catch {
+        // Ignore cleanup errors.
+      }
+
+      try {
+        audioRef.current?.pause();
+        if (audioUrlRef.current) {
+          URL.revokeObjectURL(audioUrlRef.current);
+          audioUrlRef.current = null;
+        }
+        audioRef.current = null;
       } catch {
         // Ignore cleanup errors.
       }
@@ -716,80 +729,178 @@ if (!SpeechRecognition) {
     });
   }
 
-  function speakText(text: string, messageIndex: number) {
+  async function speakText(text: string, messageIndex: number) {
     if (typeof window === "undefined") return;
 
-    const synth = window.speechSynthesis;
-    if (!synth) return;
+    const stopCurrentSpeech = () => {
+      try {
+        audioRef.current?.pause();
+      } catch {
+        // Ignore pause errors.
+      }
 
-    if (synth.speaking) {
-      synth.cancel();
+      if (audioUrlRef.current) {
+        URL.revokeObjectURL(audioUrlRef.current);
+        audioUrlRef.current = null;
+      }
+
+      audioRef.current = null;
+
+      try {
+        window.speechSynthesis?.cancel?.();
+      } catch {
+        // Ignore browser speech cancel errors.
+      }
+
       setIsSpeaking(false);
       setSpeakingMessageIndex(null);
       setSpeakingCharIndex(null);
       setSpeakingWordLength(0);
-      return;
-    }
-
-    const detectedLanguage = detectSpeechLanguage(text);
-    const voicesFromBrowser = synth.getVoices();
-    const voices = voicesFromBrowser.length > 0 ? voicesFromBrowser : availableVoices;
-    const preferredVoice = chooseVoiceForLanguage(voices, detectedLanguage);
-
-    const utterance = new SpeechSynthesisUtterance(text);
-
-    if (preferredVoice) {
-      utterance.voice = preferredVoice;
-      utterance.lang = preferredVoice.lang;
-    } else {
-      utterance.lang = getFallbackSpeechLang(detectedLanguage);
-    }
-
-    utterance.rate = detectedLanguage === "ar" ? 0.82 : 0.9;
-    utterance.pitch = detectedLanguage === "en" ? 0.85 : 1;
-
-    utterance.onstart = () => {
-      setIsSpeaking(true);
-      setSpeakingMessageIndex(messageIndex);
-      setSpeakingCharIndex(null);
-      setSpeakingWordLength(0);
     };
 
-    utterance.onboundary = (event) => {
-      if (typeof event.charIndex === "number") {
-        setSpeakingCharIndex(event.charIndex);
-        const boundaryLength =
-          typeof (event as SpeechSynthesisEvent & { charLength?: number }).charLength ===
-          "number"
-            ? (event as SpeechSynthesisEvent & { charLength?: number }).charLength || 0
-            : 0;
-
-        setSpeakingWordLength(boundaryLength);
+    const restartMicAfterSpeech = () => {
+      if (voiceMode && chatOpen && !isSending) {
+        window.setTimeout(() => {
+          startVoiceInput();
+        }, 700);
       }
     };
 
-    utterance.onend = () => {
-      setIsSpeaking(false);
-      setSpeakingMessageIndex(null);
-      setSpeakingCharIndex(null);
-      setSpeakingWordLength(0);
+    const startTimedHighlighting = (audio: HTMLAudioElement) => {
+      const wordMatches = Array.from(text.matchAll(/\S+/g));
+      if (wordMatches.length === 0) return null;
+
+      let animationFrame: number | null = null;
+      let lastWordIndex = -1;
+
+      const updateHighlight = () => {
+        const fallbackDuration = Math.max(2.5, text.length / 10);
+        const duration =
+          Number.isFinite(audio.duration) && audio.duration > 0
+            ? audio.duration
+            : fallbackDuration;
+
+        const progress = Math.min(
+          0.999,
+          Math.max(0, audio.currentTime / duration)
+        );
+
+        const wordIndex = Math.min(
+          wordMatches.length - 1,
+          Math.floor(progress * wordMatches.length)
+        );
+
+        if (wordIndex !== lastWordIndex) {
+          const currentWord = wordMatches[wordIndex];
+
+          if (currentWord && typeof currentWord.index === "number") {
+            setSpeakingCharIndex(currentWord.index);
+            setSpeakingWordLength(currentWord[0].length);
+            lastWordIndex = wordIndex;
+          }
+        }
+
+        if (!audio.paused && !audio.ended) {
+          animationFrame = window.requestAnimationFrame(updateHighlight);
+        }
+      };
+
+      animationFrame = window.requestAnimationFrame(updateHighlight);
+
+      return () => {
+        if (animationFrame !== null) {
+          window.cancelAnimationFrame(animationFrame);
+        }
+      };
     };
 
-utterance.onend = () => {
-  setIsSpeaking(false);
-  setSpeakingMessageIndex(null);
-  setSpeakingCharIndex(null);
-  setSpeakingWordLength(0);
+    if (audioRef.current) {
+      stopCurrentSpeech();
+      return;
+    }
 
-  if (voiceMode && chatOpen && !isSending) {
-    window.setTimeout(() => {
-      startVoiceInput();
-    }, 700);
-  }
-};
+    try {
+      // OpenAI TTS must be the only voice. Always cancel browser speech first.
+      window.speechSynthesis?.cancel?.();
 
-    synth.cancel();
-    synth.speak(utterance);
+      const response = await fetch("/api/elvy-tts", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          text,
+          voice: "ash",
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("OpenAI TTS request failed.");
+      }
+
+      const audioBlob = await response.blob();
+      const audioUrl = URL.createObjectURL(audioBlob);
+      const audio = new Audio(audioUrl);
+
+      audioRef.current = audio;
+      audioUrlRef.current = audioUrl;
+
+      let stopHighlighting: (() => void) | null = null;
+
+      audio.onplay = () => {
+        // Cancel again in case the browser started any queued speech.
+        try {
+          window.speechSynthesis?.cancel?.();
+        } catch {
+          // Ignore browser speech cancel errors.
+        }
+
+        setIsSpeaking(true);
+        setSpeakingMessageIndex(messageIndex);
+        setSpeakingCharIndex(null);
+        setSpeakingWordLength(0);
+
+        stopHighlighting = startTimedHighlighting(audio);
+      };
+
+      audio.onended = () => {
+        stopHighlighting?.();
+
+        if (audioUrlRef.current) {
+          URL.revokeObjectURL(audioUrlRef.current);
+          audioUrlRef.current = null;
+        }
+
+        audioRef.current = null;
+        setIsSpeaking(false);
+        setSpeakingMessageIndex(null);
+        setSpeakingCharIndex(null);
+        setSpeakingWordLength(0);
+        restartMicAfterSpeech();
+      };
+
+      audio.onerror = () => {
+        stopHighlighting?.();
+
+        if (audioUrlRef.current) {
+          URL.revokeObjectURL(audioUrlRef.current);
+          audioUrlRef.current = null;
+        }
+
+        audioRef.current = null;
+        setIsSpeaking(false);
+        setSpeakingMessageIndex(null);
+        setSpeakingCharIndex(null);
+        setSpeakingWordLength(0);
+
+        console.error("OpenAI TTS audio playback failed.");
+      };
+
+      await audio.play();
+    } catch (error) {
+      console.error("OpenAI TTS failed. No browser voice fallback will be used:", error);
+      stopCurrentSpeech();
+    }
   }
 
   async function sendMessage(messageOverride?: string) {
