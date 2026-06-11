@@ -67,9 +67,12 @@ export default function MobileElvyPage() {
   const recognitionRef = useRef<any>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioUrlRef = useRef<string | null>(null);
+  const voiceRequestLockRef = useRef(false);
 
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isVoiceLoading, setIsVoiceLoading] = useState(false);
+  const [voiceLoadingMessageIndex, setVoiceLoadingMessageIndex] = useState<number | null>(null);
   const [speakingMessageIndex, setSpeakingMessageIndex] = useState<number | null>(null);
   const [speakingCharIndex, setSpeakingCharIndex] = useState<number | null>(null);
   const [speakingWordLength, setSpeakingWordLength] = useState(0);
@@ -89,6 +92,16 @@ export default function MobileElvyPage() {
       text: "Hello. My name is Elvy. I am a communication companion. How can I help you?",
     },
   ]);
+
+  const ticketRequired =
+    showTicketInfo ||
+    (!isActivated && freeRepliesUsed >= FREE_REPLIES_LIMIT);
+
+  const interactionLocked =
+    isSending ||
+    isVoiceLoading ||
+    isSpeaking ||
+    ticketRequired;
 
   useEffect(() => {
     try {
@@ -272,6 +285,9 @@ useEffect(() => {
           audioUrlRef.current = null;
         }
         audioRef.current = null;
+        voiceRequestLockRef.current = false;
+        setIsVoiceLoading(false);
+        setVoiceLoadingMessageIndex(null);
       } catch {
         // Ignore cleanup errors.
       }
@@ -279,9 +295,12 @@ useEffect(() => {
       try {
         window.speechSynthesis?.cancel?.();
         setIsSpeaking(false);
+        setIsVoiceLoading(false);
+        setVoiceLoadingMessageIndex(null);
         setSpeakingMessageIndex(null);
         setSpeakingCharIndex(null);
         setSpeakingWordLength(0);
+        voiceRequestLockRef.current = false;
       } catch {
         // Ignore cleanup errors.
       }
@@ -476,7 +495,7 @@ setActivationMessage("Elvy is activated.");
   }
 
   function startVoiceInput() {
-    if (isSending || isListening) return;
+    if (isSending || isListening || isVoiceLoading || isSpeaking || ticketRequired) return;
 
     const SpeechRecognition =
       (window as any).SpeechRecognition ||
@@ -732,6 +751,19 @@ if (!SpeechRecognition) {
   async function speakText(text: string, messageIndex: number) {
     if (typeof window === "undefined") return;
 
+    // Prevent double clicks from starting more than one OpenAI TTS request.
+    // Once clicked, the speaker remains locked until the audio fully ends or fails.
+    if (voiceRequestLockRef.current || isVoiceLoading || isSpeaking || audioRef.current) {
+      return;
+    }
+
+    voiceRequestLockRef.current = true;
+    setIsVoiceLoading(true);
+    setVoiceLoadingMessageIndex(messageIndex);
+    setSpeakingMessageIndex(messageIndex);
+    setSpeakingCharIndex(null);
+    setSpeakingWordLength(0);
+
     const stopCurrentSpeech = () => {
       try {
         audioRef.current?.pause();
@@ -745,6 +777,7 @@ if (!SpeechRecognition) {
       }
 
       audioRef.current = null;
+      voiceRequestLockRef.current = false;
 
       try {
         window.speechSynthesis?.cancel?.();
@@ -752,6 +785,8 @@ if (!SpeechRecognition) {
         // Ignore browser speech cancel errors.
       }
 
+      setIsVoiceLoading(false);
+      setVoiceLoadingMessageIndex(null);
       setIsSpeaking(false);
       setSpeakingMessageIndex(null);
       setSpeakingCharIndex(null);
@@ -815,7 +850,6 @@ if (!SpeechRecognition) {
     };
 
     if (audioRef.current) {
-      stopCurrentSpeech();
       return;
     }
 
@@ -855,6 +889,8 @@ if (!SpeechRecognition) {
           // Ignore browser speech cancel errors.
         }
 
+        setIsVoiceLoading(false);
+        setVoiceLoadingMessageIndex(null);
         setIsSpeaking(true);
         setSpeakingMessageIndex(messageIndex);
         setSpeakingCharIndex(null);
@@ -872,6 +908,9 @@ if (!SpeechRecognition) {
         }
 
         audioRef.current = null;
+        voiceRequestLockRef.current = false;
+        setIsVoiceLoading(false);
+        setVoiceLoadingMessageIndex(null);
         setIsSpeaking(false);
         setSpeakingMessageIndex(null);
         setSpeakingCharIndex(null);
@@ -888,6 +927,9 @@ if (!SpeechRecognition) {
         }
 
         audioRef.current = null;
+        voiceRequestLockRef.current = false;
+        setIsVoiceLoading(false);
+        setVoiceLoadingMessageIndex(null);
         setIsSpeaking(false);
         setSpeakingMessageIndex(null);
         setSpeakingCharIndex(null);
@@ -905,25 +947,18 @@ if (!SpeechRecognition) {
 
   async function sendMessage(messageOverride?: string) {
     const text = (messageOverride ?? input).trim();
-    if (!text || isSending) return;
-
-    setMessages((prev) => [...prev, { sender: "user", text }]);
-    setInput("");
+    if (!text || isSending || isVoiceLoading || isSpeaking || ticketRequired) return;
 
     const paidModeAllowed = isActivated && repliesLeft > 0;
     const freeModeAllowed = !paidModeAllowed && freeRepliesUsed < FREE_REPLIES_LIMIT;
 
     if (!freeModeAllowed && !paidModeAllowed) {
       setShowTicketInfo(true);
-      setMessages((prev) => [
-        ...prev,
-        {
-          sender: "elvy",
-          text: "Please activate an Elvy ticket to continue.",
-        },
-      ]);
       return;
     }
+
+    setMessages((prev) => [...prev, { sender: "user", text }]);
+    setInput("");
 
     let codeToSend = "";
 
@@ -1391,10 +1426,30 @@ if (!SpeechRecognition) {
                       <button
                         type="button"
                         onClick={() => speakText(msg.text, index)}
+                        disabled={isVoiceLoading || isSpeaking}
                         className="mt-2 inline-flex items-center rounded-full bg-[#eef7ff] px-3 py-1 text-[12px] font-bold text-[#1d7fe2] shadow-sm transition-all active:scale-[0.98]"
-                        style={{ border: "1px solid rgba(29, 127, 226, 0.22)" }}
+                        style={{
+                          border: "1px solid rgba(29, 127, 226, 0.22)",
+                          opacity: isSending || isVoiceLoading || isSpeaking ?  0.5 : 1,
+                          cursor: isVoiceLoading || isSpeaking ? "not-allowed" : "pointer",
+                        }}
                       >
-                        {isSpeaking && speakingMessageIndex === index ? (
+                        {isVoiceLoading && voiceLoadingMessageIndex === index ? (
+                          <>
+                            <span>⏳</span>
+                            <span
+                              style={{
+                                marginLeft: "6px",
+                                color: "#1d7fe2",
+                                fontSize: "10px",
+                                fontWeight: 700,
+                                opacity: 0.9,
+                              }}
+                            >
+                              Loading voice...
+                            </span>
+                          </>
+                        ) : isSpeaking && speakingMessageIndex === index ? (
                           <>
                             <span>🔊</span>
                             <span
@@ -1524,18 +1579,24 @@ if (!SpeechRecognition) {
               <input
                 ref={inputRef}
                 value={input}
-                disabled={isSending}
+                disabled={interactionLocked}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") sendMessage();
                 }}
                 type="text"
                 placeholder={
-                  isSending
-                    ? "Elvy is replying..."
-                    : isListening
-                      ? "Listening... speak now"
-                      : "Write..."
+                  ticketRequired
+                    ? "Activate an Elvy ticket to continue..."
+                    : isSending
+                      ? "Elvy is replying..."
+                      : isVoiceLoading
+                        ? "Loading voice..."
+                        : isSpeaking
+                          ? "Elvy is speaking..."
+                          : isListening
+                            ? "Listening... speak now"
+                            : "Write..."
                 }
                 className="min-w-0 flex-1 bg-white text-[#2b1a12] outline-none placeholder:text-[#9a8d80]"
                 style={{
@@ -1552,17 +1613,26 @@ if (!SpeechRecognition) {
               <button
                 type="button"
                 onClick={startVoiceInput}
-                disabled={isSending || isListening}
+                disabled={isListening || interactionLocked}
                 className="flex shrink-0 items-center justify-center rounded-full text-white shadow-md transition-all active:scale-[0.98]"
-                style={{
-                  width: "54px",
-                  height: "54px",
-                  backgroundColor: isListening ? "#dc2626" : "#118a3b",
-                  border: "1px solid rgba(31,107,43,0.75)",
-                  fontSize: "22px",
-                  opacity: isSending ? 0.7 : 1,
-                  animation: isListening ? "pulse 1.2s infinite" : "none",
-                }}
+style={{
+  width: "54px",
+  height: "54px",
+
+  backgroundColor:
+    isListening
+      ? "#dc2626"
+      : interactionLocked
+        ? "#9ca3af"
+        : "#118a3b",
+
+  border: "1px solid rgba(31,107,43,0.75)",
+  fontSize: "22px",
+
+  opacity: interactionLocked ? 0.5 : 1,
+
+  animation: isListening ? "pulse 1.2s infinite" : "none",
+}}
                 title="Speak to Elvy"
               >
                 {isListening ? "🔴" : "🎤"}
@@ -1571,24 +1641,24 @@ if (!SpeechRecognition) {
               <button
                 type="button"
                 onClick={() => sendMessage()}
-                disabled={isSending}
+                disabled={interactionLocked}
                 className="shrink-0 rounded-full text-white shadow-md transition-all active:scale-[0.98]"
                 style={{
                   height: "54px",
                   minWidth: "72px",
                   padding: "0 18px",
                   border: "1px solid #1d7fe2",
-                  backgroundColor: isSending ? "#9fc8ef" : "#1d7fe2",
+                  backgroundColor: interactionLocked ? "#9fc8ef" : "#1d7fe2",
                   fontSize: "15px",
                   fontWeight: 800,
-                  opacity: isSending ? 0.7 : 1,
+                  opacity: interactionLocked ? 0.7 : 1,
                 }}
               >
-                {isSending ? "Wait" : "Send"}
+                {interactionLocked ? "Wait" : "Send"}
               </button>
             </div>
 <div className="pt-1 text-center">
-  {!isListening && !input.trim() && !isSending && (
+  {!ticketRequired && !isListening && !input.trim() && !isSending && (
     <div
       className="text-center font-medium"
       style={{
