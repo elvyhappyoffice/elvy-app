@@ -1,0 +1,44 @@
+{
+  "levels": [
+    {
+      "id": "level-a",
+      "title": "LEVEL A",
+      "sublevels": [
+        {
+          "id": "a1",
+          "title": "A1",
+          "units": [
+            {
+              "id": "unit-hello",
+              "title": "Hello",
+              "lessons": [
+                {
+                  "id": "lesson-1",
+                  "title": "Greetings"
+                },
+                {
+                  "id": "lesson-2",
+                  "title": "Asking Names"
+                },
+                {
+                  "id": "f8c97ac7-50d3-4a0c-b6d3-1e9fd174798a",
+                  "title": "haouse"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "level-b",
+      "title": "LEVEL B",
+      "sublevels": []
+    },
+    {
+      "id": "level-c",
+      "title": "LEVEL C",
+      "sublevels": []
+    }
+  ]
+}
