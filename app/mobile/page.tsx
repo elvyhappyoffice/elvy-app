@@ -350,7 +350,7 @@ export default function MobileElvyPage() {
         const data = await response.json();
 
         const latestStudent = data?.students?.find(
-          (item: StudentProfile) => item.code === studentProfile.code,
+          (item: StudentProfile) => item.code === studentProfile?.code,
         ) as StudentProfile | undefined;
 
         if (!latestStudent) return;
