@@ -2,7 +2,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 type StudentStatus = "Active" | "Waiting Approval" | "Suspended";
 
@@ -193,10 +193,6 @@ export default function StudentsDashboard() {
     "Loading curriculum...",
   );
   const [studentsStatus, setStudentsStatus] = useState("Loading students...");
-  const hasLoadedStudentsRef = useRef(false);
-  const saveStudentsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
 
   useEffect(() => {
     async function loadCurriculum() {
@@ -235,50 +231,40 @@ export default function StudentsDashboard() {
       } catch (error) {
         console.error("Students load failed:", error);
         setStudentsStatus("Could not load saved students.");
-      } finally {
-        hasLoadedStudentsRef.current = true;
       }
     }
 
     loadStudents();
   }, []);
 
-  useEffect(() => {
-    if (!hasLoadedStudentsRef.current) return;
 
-    if (saveStudentsTimerRef.current) {
-      clearTimeout(saveStudentsTimerRef.current);
-    }
-
+  async function saveStudentAction(payload: Record<string, unknown>) {
     setStudentsStatus("Saving students...");
 
-    saveStudentsTimerRef.current = setTimeout(async () => {
-      try {
-        const response = await fetch("/api/students", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ students }),
-        });
+    try {
+      const response = await fetch("/api/students", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
 
-        if (!response.ok) {
-          throw new Error("Save request failed.");
-        }
+      const data = await response.json();
 
-        setStudentsStatus("Students saved.");
-      } catch (error) {
-        console.error("Students save failed:", error);
-        setStudentsStatus("Students save failed.");
+      if (!response.ok || data?.success === false) {
+        throw new Error(data?.message || "Save request failed.");
       }
-    }, 500);
 
-    return () => {
-      if (saveStudentsTimerRef.current) {
-        clearTimeout(saveStudentsTimerRef.current);
-      }
-    };
-  }, [students]);
+      setStudentsStatus("Students saved.");
+      return data;
+    } catch (error) {
+      console.error("Students save failed:", error);
+      setStudentsStatus("Students save failed.");
+      alert("Could not save student changes. Please try again.");
+      return null;
+    }
+  }
 
   function chooseCurriculumPath() {
     const level = selectFromList("Level", curriculumLevels);
@@ -304,7 +290,7 @@ export default function StudentsDashboard() {
     };
   }
 
-  function addStudent() {
+  async function addStudent() {
     const name = cleanText(prompt("Student full name, example: Ahmed RAM"));
     if (!name) return;
 
@@ -322,10 +308,17 @@ export default function StudentsDashboard() {
       ...createDefaultTicket(),
     };
 
-    setStudents((prev) => [...prev, newStudent]);
+    const data = await saveStudentAction({
+      action: "add",
+      student: newStudent,
+    });
+
+    if (!data) return;
+
+    setStudents((prev) => [...prev, normalizeStudent(data.student || newStudent)]);
   }
 
-  function editStudent(id: string) {
+  async function editStudent(id: string) {
     const student = students.find((item) => item.id === id);
     if (!student) return;
 
@@ -359,33 +352,48 @@ export default function StudentsDashboard() {
     const shouldUpdateTicket =
       ticketAnswer !== null && ticketAnswer.trim() !== "" && cleanTicketHours > 0;
 
+    const updatedStudent: Student = {
+      ...student,
+      name,
+      ...(selectedPath || {}),
+      status: nextStatus,
+      ...(shouldUpdateTicket
+        ? {
+            passHours: cleanTicketHours,
+            secondsRemaining: cleanTicketHours * 60 * 60,
+            secondsUsed: 0,
+          }
+        : {}),
+    };
+
+    const data = await saveStudentAction({
+      action: "update",
+      student: updatedStudent,
+    });
+
+    if (!data) return;
+
     setStudents((prev) =>
       prev.map((item) =>
-        item.id === id
-          ? {
-              ...item,
-              name,
-              ...(selectedPath || {}),
-              status: nextStatus,
-              ...(shouldUpdateTicket
-                ? {
-                    passHours: cleanTicketHours,
-                    secondsRemaining: cleanTicketHours * 60 * 60,
-                    secondsUsed: 0,
-                  }
-                : {}),
-            }
-          : item,
+        item.id === id ? normalizeStudent(data.student || updatedStudent) : item,
       ),
     );
   }
 
-  function deleteStudent(id: string) {
+  async function deleteStudent(id: string) {
     const student = students.find((item) => item.id === id);
     if (!student) return;
 
     const confirmed = window.confirm(`Delete ${student.name}?`);
     if (!confirmed) return;
+
+    const data = await saveStudentAction({
+      action: "delete",
+      id: student.id,
+      code: student.code,
+    });
+
+    if (!data) return;
 
     setStudents((prev) => prev.filter((item) => item.id !== id));
   }
@@ -456,36 +464,56 @@ export default function StudentsDashboard() {
     return null;
   }
 
-  function moveToNextLesson(id: string) {
+  async function moveToNextLesson(id: string) {
+    const student = students.find((item) => item.id === id);
+    if (!student) return;
+
+    const nextPath = getNextLessonPath(student);
+
+    if (!nextPath) {
+      alert("No next lesson found in the current curriculum.");
+      return;
+    }
+
+    const updatedStudent: Student = {
+      ...student,
+      ...nextPath,
+      status: "Active",
+    };
+
+    const data = await saveStudentAction({
+      action: "update",
+      student: updatedStudent,
+    });
+
+    if (!data) return;
+
     setStudents((prev) =>
-      prev.map((student) => {
-        if (student.id !== id) return student;
-
-        const nextPath = getNextLessonPath(student);
-
-        if (!nextPath) {
-          alert("No next lesson found in the current curriculum.");
-          return student;
-        }
-
-        return {
-          ...student,
-          ...nextPath,
-          status: "Active",
-        };
-      }),
+      prev.map((item) =>
+        item.id === id ? normalizeStudent(data.student || updatedStudent) : item,
+      ),
     );
   }
 
-  function markWaitingApproval(id: string) {
+  async function markWaitingApproval(id: string) {
+    const student = students.find((item) => item.id === id);
+    if (!student) return;
+
+    const updatedStudent: Student = {
+      ...student,
+      status: "Waiting Approval",
+    };
+
+    const data = await saveStudentAction({
+      action: "update",
+      student: updatedStudent,
+    });
+
+    if (!data) return;
+
     setStudents((prev) =>
-      prev.map((student) =>
-        student.id === id
-          ? {
-              ...student,
-              status: "Waiting Approval",
-            }
-          : student,
+      prev.map((item) =>
+        item.id === id ? normalizeStudent(data.student || updatedStudent) : item,
       ),
     );
   }

@@ -39,28 +39,21 @@ function safeNumber(value: unknown, fallback = 0) {
   return Number.isFinite(numberValue) ? numberValue : fallback;
 }
 
-function mapSupabaseStudent(row: any) {
-  return {
-    id: row.id || "",
-    name: row.name || "",
-    username: row.username || "",
-    password: row.password || "",
-    code: row.code || "",
-    level: row.level || "",
-    sublevel: row.sublevel || "",
-    unit: row.unit || "",
-    lesson: safeNumber(row.lesson, 1),
-    lessonTitle: row.lesson_title || "",
-    status: row.status || "Suspended",
-    passHours: safeNumber(row.pass_hours, 10),
-    secondsRemaining: safeNumber(row.seconds_remaining, 0),
-    secondsUsed: safeNumber(row.seconds_used, 0),
-    lastMobileReplyAt: row.last_mobile_reply_at || "",
-    updatedAt: row.updated_at || "",
-  };
+function normalizeStatus(value: unknown) {
+  const status = String(value || "Suspended");
+
+  if (
+    status === "Active" ||
+    status === "Waiting Approval" ||
+    status === "Suspended"
+  ) {
+    return status;
+  }
+
+  return "Suspended";
 }
 
-function mapStudentToSupabase(student: any) {
+function normalizeStudent(student: any) {
   return {
     id: String(student?.id || crypto.randomUUID()),
     name: String(student?.name || ""),
@@ -71,17 +64,61 @@ function mapStudentToSupabase(student: any) {
     sublevel: String(student?.sublevel || ""),
     unit: String(student?.unit || ""),
     lesson: safeNumber(student?.lesson, 1),
-    lesson_title: String(student?.lessonTitle || student?.lesson_title || ""),
-    status: String(student?.status || "Suspended"),
-    pass_hours: safeNumber(student?.passHours ?? student?.pass_hours, 10),
-    seconds_remaining: safeNumber(
+    lessonTitle: String(student?.lessonTitle || student?.lesson_title || ""),
+    status: normalizeStatus(student?.status),
+    passHours: safeNumber(student?.passHours ?? student?.pass_hours, 15),
+    secondsRemaining: safeNumber(
       student?.secondsRemaining ?? student?.seconds_remaining,
       0,
     ),
-    seconds_used: safeNumber(student?.secondsUsed ?? student?.seconds_used, 0),
-    last_mobile_reply_at: String(
+    secondsUsed: safeNumber(student?.secondsUsed ?? student?.seconds_used, 0),
+    lastMobileReplyAt: String(
       student?.lastMobileReplyAt || student?.last_mobile_reply_at || "",
     ),
+    updatedAt: String(student?.updatedAt || student?.updated_at || ""),
+  };
+}
+
+function mapSupabaseStudent(row: any) {
+  return normalizeStudent({
+    id: row.id,
+    name: row.name,
+    username: row.username,
+    password: row.password,
+    code: row.code,
+    level: row.level,
+    sublevel: row.sublevel,
+    unit: row.unit,
+    lesson: row.lesson,
+    lessonTitle: row.lesson_title,
+    status: row.status,
+    passHours: row.pass_hours,
+    secondsRemaining: row.seconds_remaining,
+    secondsUsed: row.seconds_used,
+    lastMobileReplyAt: row.last_mobile_reply_at,
+    updatedAt: row.updated_at,
+  });
+}
+
+function mapStudentToSupabase(student: any) {
+  const normalized = normalizeStudent(student);
+
+  return {
+    id: normalized.id,
+    name: normalized.name,
+    username: normalized.username,
+    password: normalized.password,
+    code: normalized.code,
+    level: normalized.level,
+    sublevel: normalized.sublevel,
+    unit: normalized.unit,
+    lesson: normalized.lesson,
+    lesson_title: normalized.lessonTitle,
+    status: normalized.status,
+    pass_hours: normalized.passHours,
+    seconds_remaining: normalized.secondsRemaining,
+    seconds_used: normalized.secondsUsed,
+    last_mobile_reply_at: normalized.lastMobileReplyAt,
     updated_at: new Date().toISOString(),
   };
 }
@@ -104,34 +141,111 @@ async function readStudents() {
   return (data || []).map(mapSupabaseStudent);
 }
 
-async function replaceStudents(students: any[]) {
+async function addOrUpdateStudent(student: any) {
+  const normalizedStudent = normalizeStudent(student);
+
   if (!process.env.VERCEL) {
-    await saveStudentsFile(students);
-    return;
+    const students = await readStudentsFile();
+
+    const exists = students.some(
+      (item: any) => String(item?.id || "") === normalizedStudent.id,
+    );
+
+    const nextStudents = exists
+      ? students.map((item: any) =>
+          String(item?.id || "") === normalizedStudent.id
+            ? normalizedStudent
+            : item,
+        )
+      : [...students, normalizedStudent];
+
+    await saveStudentsFile(nextStudents);
+    return normalizedStudent;
   }
 
-  const { error: deleteError } = await supabase
+  const { data, error } = await supabase
     .from(STUDENTS_TABLE)
-    .delete()
-    .neq("id", "__never_matching_id__");
+    .upsert(mapStudentToSupabase(normalizedStudent), {
+      onConflict: "id",
+    })
+    .select("*")
+    .single();
 
-  if (deleteError) {
-    console.error("Supabase students delete before replace error:", deleteError);
-    throw deleteError;
+  if (error || !data) {
+    console.error("Supabase student upsert error:", error);
+    throw error || new Error("Student upsert failed.");
   }
 
-  if (students.length === 0) return;
+  return mapSupabaseStudent(data);
+}
 
-  const rows = students.map(mapStudentToSupabase);
+async function deleteStudentByIdOrCode(id: string, code: string) {
+  if (!id && !code) {
+    throw new Error("Student ID or code is required.");
+  }
 
-  const { error: insertError } = await supabase
+  if (!process.env.VERCEL) {
+    const students = await readStudentsFile();
+
+    const nextStudents = students.filter((student: any) => {
+      const sameId = id && String(student?.id || "") === id;
+      const sameCode = code && cleanCode(student?.code) === code;
+
+      return !sameId && !sameCode;
+    });
+
+    await saveStudentsFile(nextStudents);
+
+    return {
+      deleted: nextStudents.length !== students.length,
+    };
+  }
+
+  let query = supabase.from(STUDENTS_TABLE).delete();
+
+  if (id) {
+    query = query.eq("id", id);
+  } else {
+    query = query.eq("code", code);
+  }
+
+  const { error } = await query;
+
+  if (error) {
+    console.error("Supabase student delete error:", error);
+    throw error;
+  }
+
+  return { deleted: true };
+}
+
+async function upsertStudents(students: any[]) {
+  const normalizedStudents = students.map(normalizeStudent);
+
+  if (!process.env.VERCEL) {
+    await saveStudentsFile(normalizedStudents);
+    return normalizedStudents;
+  }
+
+  if (normalizedStudents.length === 0) {
+    return [];
+  }
+
+  const rows = normalizedStudents.map(mapStudentToSupabase);
+
+  const { data, error } = await supabase
     .from(STUDENTS_TABLE)
-    .insert(rows);
+    .upsert(rows, {
+      onConflict: "id",
+    })
+    .select("*");
 
-  if (insertError) {
-    console.error("Supabase students replace error:", insertError);
-    throw insertError;
+  if (error) {
+    console.error("Supabase students bulk upsert error:", error);
+    throw error;
   }
+
+  return (data || []).map(mapSupabaseStudent);
 }
 
 async function syncOneStudentTicket(body: any) {
@@ -189,17 +303,13 @@ async function syncOneStudentTicket(body: any) {
         ),
       );
 
-      updatedStudent = {
+      updatedStudent = normalizeStudent({
         ...student,
         secondsRemaining: nextRemaining,
         secondsUsed: previousUsed + secondsUsedThisTurn,
         lastMobileReplyAt: new Date().toISOString(),
-      };
-
-      if (nextRemaining <= 0) {
-        updatedStudent.status = "Suspended";
-        updatedStudent.ticketStatus = "Expired";
-      }
+        ...(nextRemaining <= 0 ? { status: "Suspended" } : {}),
+      });
 
       return updatedStudent;
     });
@@ -319,11 +429,55 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     const body = await req.json();
+    const action = String(body?.action || "").trim().toLowerCase();
 
-    // Full dashboard save: keeps the existing Students Dashboard behavior.
+    if (action === "add" || action === "update" || action === "upsert") {
+      const student = body?.student;
+
+      if (!student || typeof student !== "object") {
+        return NextResponse.json(
+          { success: false, message: "Student data is required." },
+          { status: 400 },
+        );
+      }
+
+      const updatedStudent = await addOrUpdateStudent(student);
+
+      return NextResponse.json({
+        success: true,
+        student: updatedStudent,
+      });
+    }
+
+    if (action === "delete") {
+      const id = String(body?.id || body?.studentId || "").trim();
+      const code = cleanCode(body?.code || body?.studentCode);
+
+      if (!id && !code) {
+        return NextResponse.json(
+          { success: false, message: "Student ID or code is required." },
+          { status: 400 },
+        );
+      }
+
+      await deleteStudentByIdOrCode(id, code);
+
+      return NextResponse.json({
+        success: true,
+        deleted: true,
+      });
+    }
+
+    // Safe backward compatibility:
+    // If an older dashboard still sends the full array, we UPSERT rows.
+    // We do NOT delete the whole table anymore.
     if (Array.isArray(body?.students)) {
-      await replaceStudents(body.students);
-      return NextResponse.json({ success: true, students: body.students });
+      const savedStudents = await upsertStudents(body.students);
+
+      return NextResponse.json({
+        success: true,
+        students: savedStudents,
+      });
     }
 
     // Mobile ticket sync: update only one student's remaining ticket time.
