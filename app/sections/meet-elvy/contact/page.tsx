@@ -8,6 +8,14 @@ export default function ContactPage() {
 
   const [isAdmin, setIsAdmin] = useState(false);
 
+  const LANGUAGE_CENTER_USERNAME = "center";
+  const LANGUAGE_CENTER_PASSWORD = "elvycenter";
+
+  const [showLanguageLogin, setShowLanguageLogin] = useState(false);
+  const [languageUsername, setLanguageUsername] = useState("");
+  const [languagePassword, setLanguagePassword] = useState("");
+  const [languageLoginMessage, setLanguageLoginMessage] = useState("");
+
   const DEFAULT_TEXT = `Elvy is supported by the Happy Office team. You can reach out whenever you need assistance, clarification, or support.
 
 Communication is simple and direct. Elvy uses familiar platforms such as Telegram and WhatsApp to stay accessible and easy to use.
@@ -56,6 +64,23 @@ If you prefer, you can contact the Happy Office team directly by email.`;
     );
 
     window.location.href = `mailto:${happyOfficeEmail}?subject=${subject}&body=${body}`;
+  }
+
+
+  function loginToLanguageCenter() {
+    const cleanUsername = languageUsername.trim().toLowerCase();
+    const cleanPassword = languagePassword.trim();
+
+    if (
+      cleanUsername === LANGUAGE_CENTER_USERNAME &&
+      cleanPassword === LANGUAGE_CENTER_PASSWORD
+    ) {
+      sessionStorage.setItem("elvy_language_center_access", "granted");
+      window.location.href = "/founder/language_center";
+      return;
+    }
+
+    setLanguageLoginMessage("Incorrect username or password.");
   }
 
   return (
@@ -176,13 +201,88 @@ If you prefer, you can contact the Happy Office team directly by email.`;
         </div>
       </div>
 
-      {/* ADMIN LOGIN */}
-      <Link
-        href="/admin"
-        className="absolute bottom-3 left-1/2 -translate-x-1/2 text-xs text-[#6b4c3b]/70 hover:text-[#7a3b1d]"
-      >
-        admin access
-      </Link>
+      {/* ADMIN / LANGUAGE CENTER ACCESS */}
+      <div className="absolute bottom-3 left-1/2 z-30 flex -translate-x-1/2 items-center gap-4 text-xs">
+        <Link
+          href="/admin"
+          className="text-[#6b4c3b]/70 hover:text-[#7a3b1d]"
+        >
+          admin access
+        </Link>
+
+        <button
+          type="button"
+          onClick={() => {
+            setShowLanguageLogin(true);
+            setLanguageLoginMessage("");
+          }}
+          className="text-[#1f6b2b]/80 hover:text-[#1f6b2b]"
+        >
+          language center access
+        </button>
+      </div>
+
+      {showLanguageLogin && (
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/35 backdrop-blur-sm">
+          <div className="w-[360px] rounded-3xl bg-white p-6 shadow-2xl">
+            <h2 className="text-2xl font-extrabold text-[#1f6b2b]">
+              Language Center Login
+            </h2>
+
+            <p className="mt-2 text-sm text-[#6b5a4c]">
+              Enter the center username and password to open the Language Center dashboard.
+            </p>
+
+            <input
+              type="text"
+              value={languageUsername}
+              onChange={(e) => setLanguageUsername(e.target.value)}
+              placeholder="Username"
+              className="mt-5 w-full rounded-xl border border-[#ead8c0] px-4 py-3 text-black outline-none"
+            />
+
+            <input
+              type="password"
+              value={languagePassword}
+              onChange={(e) => setLanguagePassword(e.target.value)}
+              placeholder="Password"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") loginToLanguageCenter();
+              }}
+              className="mt-3 w-full rounded-xl border border-[#ead8c0] px-4 py-3 text-black outline-none"
+            />
+
+            {languageLoginMessage && (
+              <p className="mt-3 text-sm font-bold text-red-600">
+                {languageLoginMessage}
+              </p>
+            )}
+
+            <div className="mt-5 flex gap-3">
+              <button
+                type="button"
+                onClick={loginToLanguageCenter}
+                className="flex-1 rounded-xl bg-[#1f6b2b] px-5 py-3 font-bold text-white shadow active:scale-[0.98]"
+              >
+                Login
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowLanguageLogin(false);
+                  setLanguageUsername("");
+                  setLanguagePassword("");
+                  setLanguageLoginMessage("");
+                }}
+                className="flex-1 rounded-xl bg-[#f1e1cf] px-5 py-3 font-bold text-[#3b2418] shadow active:scale-[0.98]"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
