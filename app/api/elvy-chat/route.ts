@@ -13,6 +13,7 @@ const openai = new OpenAI({
 const DATA_FILE = path.join(process.cwd(), "data", "dailySupportUsers.json");
 const ACCOUNTS_FILE = path.join(process.cwd(), "data", "elvyAccounts.json");
 const STUDENTS_FILE = path.join(process.cwd(), "data", "students.json");
+const STUDENTS_TABLE = "language_center_students";
 
 const AI_ACTIVE = true;
 const MAX_USER_CHARS = 500;
@@ -156,6 +157,27 @@ function saveAccounts(accounts: any[]) {
   fs.writeFileSync(ACCOUNTS_FILE, JSON.stringify(accounts, null, 2));
 }
 
+function mapSupabaseStudent(row: any) {
+  return {
+    id: row.id || "",
+    name: row.name || "",
+    username: row.username || "",
+    password: row.password || "",
+    code: row.code || "",
+    level: row.level || "",
+    sublevel: row.sublevel || "",
+    unit: row.unit || "",
+    lesson: Number(row.lesson || 1),
+    lessonTitle: row.lesson_title || "",
+    status: row.status || "Suspended",
+    passHours: Number(row.pass_hours || 10),
+    secondsRemaining: Number(row.seconds_remaining || 0),
+    secondsUsed: Number(row.seconds_used || 0),
+    lastMobileReplyAt: row.last_mobile_reply_at || "",
+    updatedAt: row.updated_at || "",
+  };
+}
+
 function readStudents() {
   try {
     if (!fs.existsSync(STUDENTS_FILE)) return [];
@@ -185,11 +207,32 @@ function findStudentByCode(students: any[], code: string) {
   );
 }
 
-async function getStudentSecondsRemaining(studentCode: string) {
+async function getStudentByCode(studentCode: string) {
   if (!studentCode) return null;
 
+  const cleanStudentCode = studentCode.trim().toUpperCase();
+
+  if (process.env.VERCEL) {
+    const { data, error } = await supabase
+      .from(STUDENTS_TABLE)
+      .select("*")
+      .eq("code", cleanStudentCode)
+      .single();
+
+    if (error || !data) {
+      console.error("Supabase student load error:", error);
+      return null;
+    }
+
+    return mapSupabaseStudent(data);
+  }
+
   const students = readStudents();
-  const student = findStudentByCode(students, studentCode);
+  return findStudentByCode(students, cleanStudentCode) || null;
+}
+
+async function getStudentSecondsRemaining(studentCode: string) {
+  const student = await getStudentByCode(studentCode);
 
   if (!student) return null;
 
@@ -217,13 +260,47 @@ async function updateStudentTime(
     Math.floor(Number(secondsUsedThisTurn || 0))
   );
 
+  const cleanStudentCode = studentCode.trim().toUpperCase();
+
+  if (process.env.VERCEL) {
+    const { data, error: loadError } = await supabase
+      .from(STUDENTS_TABLE)
+      .select("id, seconds_used")
+      .eq("code", cleanStudentCode)
+      .single();
+
+    if (loadError || !data) {
+      console.error("Supabase student time load error:", loadError);
+      return;
+    }
+
+    const previousSecondsUsed = Number(data.seconds_used || 0);
+
+    const { error: updateError } = await supabase
+      .from(STUDENTS_TABLE)
+      .update({
+        seconds_remaining: safeSecondsRemaining,
+        seconds_used: previousSecondsUsed + safeSecondsUsedThisTurn,
+        last_mobile_reply_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        ...(safeSecondsRemaining <= 0 ? { status: "Suspended" } : {}),
+      })
+      .eq("id", data.id);
+
+    if (updateError) {
+      console.error("Supabase student time update error:", updateError);
+    }
+
+    return;
+  }
+
   const students = readStudents();
 
   const updatedStudents = students.map((student: any) => {
     if (
       String(student.code || "")
         .trim()
-        .toLowerCase() !== studentCode.trim().toLowerCase()
+        .toLowerCase() !== cleanStudentCode.toLowerCase()
     ) {
       return student;
     }
@@ -235,6 +312,7 @@ async function updateStudentTime(
         Number(student.secondsUsed || student.seconds_used || 0) +
         safeSecondsUsedThisTurn,
       ticketStatus: safeSecondsRemaining > 0 ? "Active" : "Expired",
+      ...(safeSecondsRemaining <= 0 ? { status: "Suspended" } : {}),
       lastMobileReplyAt: new Date().toISOString(),
     };
   });
@@ -684,9 +762,7 @@ export async function POST(req: Request) {
     let studentSecondsRemainingBefore: number | null = null;
 
     if (isStudentMode) {
-      const students = readStudents();
-      const realStudent = findStudentByCode(
-        students,
+      const realStudent = await getStudentByCode(
         String(studentProfile?.code || "")
       );
 
