@@ -1652,80 +1652,82 @@ export default function MobileElvyPage() {
             }}
           >
             <div
-              className="flex shrink-0 items-start justify-between"
+              className="shrink-0"
               style={{
                 paddingBottom: "10px",
                 borderBottom: "1px solid rgba(216, 185, 143, 0.85)",
-                gap: "8px",
               }}
             >
-              <div style={{ minWidth: 0, paddingLeft: "2px" }}>
+              <div
+                className="relative flex items-center justify-center"
+                style={{ minHeight: "38px", paddingLeft: "82px", paddingRight: "72px" }}
+              >
+                {account && (
+                  <button
+                    onClick={logoutAccount}
+                    className="absolute left-0 top-0 inline-flex items-center gap-1 rounded-full bg-[#f1e1cf] text-[#4a2d1f] shadow-sm active:scale-[0.98]"
+                    style={{ padding: "6px 9px", fontSize: "10px", fontWeight: 800 }}
+                  >
+                    <span style={{ fontSize: "13px", lineHeight: "13px" }}>↪</span>
+                    Logout
+                  </button>
+                )}
+
                 <h2
-                  className="font-bold text-[#3b2418]"
+                  className="font-extrabold text-[#3b2418]"
                   style={{
                     fontSize: "15px",
-                    lineHeight: "20px",
+                    lineHeight: "22px",
                     whiteSpace: "nowrap",
                     overflow: "hidden",
                     textOverflow: "ellipsis",
-                    maxWidth: "190px",
+                    maxWidth: "100%",
+                    textAlign: "center",
                   }}
                 >
                   {account
                     ? `Talk to Elvy · ${account.displayName}`
                     : "Talk to Elvy"}
                 </h2>
-                {studentProfile ? (
-                  <p
-                    className="font-bold text-green-700"
-                    style={{
-                      fontSize: "12px",
-                      lineHeight: "16px",
-                      fontWeight: 700,
-                      whiteSpace: "nowrap",
-                      overflow: "visible",
-                      textOverflow: "ellipsis",
-                      maxWidth: "250px",
-                    }}
-                    title={`Student · ${studentProfile.level} · ${studentProfile.sublevel} · Lesson ${studentProfile.lesson} · Time: ${formatCompactTimeLeft(secondsRemaining)}`}
-                  >
-                    Student · {studentProfile.level} · {studentProfile.sublevel}{" "}
-                    · Lesson {studentProfile.lesson} · Time: {formatCompactTimeLeft(secondsRemaining)}
-                  </p>
-                ) : (
-                  isActivated && (
-                    <p
-                      className="font-bold text-green-700"
-                      style={{ fontSize: "12px", lineHeight: "18px" }}
-                    >
-                      Ticket active · {formatTimeLeft(secondsRemaining)}
-                    </p>
-                  )
-                )}
-              </div>
-
-              <div
-                className="flex shrink-0 items-center"
-                style={{ gap: "6px" }}
-              >
-                {account && (
-                  <button
-                    onClick={logoutAccount}
-                    className="rounded-full bg-[#f1e1cf] text-[#4a2d1f]"
-                    style={{ padding: "6px 10px", fontSize: "11px" }}
-                  >
-                    Logout
-                  </button>
-                )}
 
                 <button
                   onClick={() => setChatOpen(false)}
-                  className="rounded-full bg-[#f1e1cf] text-[#4a2d1f]"
-                  style={{ padding: "6px 10px", fontSize: "11px" }}
+                  className="absolute right-4 top-0 inline-flex items-center gap-1 rounded-full bg-[#f1e1cf] text-[#4a2d1f] shadow-sm active:scale-[0.98]"
+                  style={{ padding: "6px 9px", fontSize: "10px", fontWeight: 800 }}
                 >
+                  <span style={{ fontSize: "13px", lineHeight: "13px" }}>×</span>
                   Close
                 </button>
               </div>
+
+              {studentProfile ? (
+                <p
+                  className="text-center font-bold text-green-700"
+                  style={{
+                    fontSize: "11px",
+                    lineHeight: "16px",
+                    fontWeight: 900,
+                    marginTop: "2px",
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    maxWidth: "100%",
+                  }}
+                  title={`Student · ${studentProfile.level} · ${studentProfile.sublevel} · Lesson ${studentProfile.lesson} · Time: ${formatCompactTimeLeft(secondsRemaining)}`}
+                >
+                  Student · {studentProfile.level} · {studentProfile.sublevel}{" "}
+                  · Lesson {studentProfile.lesson} · Time: {formatCompactTimeLeft(secondsRemaining)}
+                </p>
+              ) : (
+                isActivated && (
+                  <p
+                    className="text-center font-bold text-green-700"
+                    style={{ fontSize: "11px", lineHeight: "15px" }}
+                  >
+                    Ticket active · {formatTimeLeft(secondsRemaining)}
+                  </p>
+                )
+              )}
             </div>
 
             <div
@@ -1750,7 +1752,7 @@ export default function MobileElvyPage() {
                     <div
                       style={{
                         position: "relative",
-                        width: "56px",
+                        width: "72px",
                         height: "76px",
                         flexShrink: 0,
                         marginTop: "2px",
@@ -1820,6 +1822,49 @@ export default function MobileElvyPage() {
                               : "none",
                         }}
                       />
+
+                      <button
+                        type="button"
+                        onClick={() => speakText(msg.text, index)}
+                        disabled={isVoiceLoading || isSpeaking}
+                        aria-label="Listen to Elvy"
+                        title={
+                          isVoiceLoading && voiceLoadingMessageIndex === index
+                            ? "Loading voice..."
+                            : isSpeaking && speakingMessageIndex === index
+                              ? "Elvy is speaking..."
+                              : "Listen"
+                        }
+                        className="absolute flex items-center justify-center rounded-full transition-all active:scale-[0.95]"
+                        style={{
+                          left: "50px",
+                          top: "21px",
+                          width: "20px",
+                          height: "20px",
+                          border: "none",
+                          background: "transparent",
+                          color:
+                            isSpeaking && speakingMessageIndex === index
+                              ? "#118a3b"
+                              : "#2b1a12",
+                          fontSize: "17px",
+                          lineHeight: "17px",
+                          opacity:
+                            isVoiceLoading || isSpeaking
+                              ? speakingMessageIndex === index || voiceLoadingMessageIndex === index
+                                ? 1
+                                : 0.35
+                              : 0.9,
+                          cursor:
+                            isVoiceLoading || isSpeaking
+                              ? "not-allowed"
+                              : "pointer",
+                        }}
+                      >
+                        {isVoiceLoading && voiceLoadingMessageIndex === index
+                          ? "⏳"
+                          : "🔊"}
+                      </button>
                     </div>
                   )}
 
@@ -1831,59 +1876,6 @@ export default function MobileElvyPage() {
                     }`}
                   >
                     <div>{renderMessageText(msg.text, index)}</div>
-
-                    {msg.sender === "elvy" && (
-                      <button
-                        type="button"
-                        onClick={() => speakText(msg.text, index)}
-                        disabled={isVoiceLoading || isSpeaking}
-                        className="mt-2 inline-flex items-center rounded-full bg-[#eef7ff] px-3 py-1 text-[12px] font-bold text-[#1d7fe2] shadow-sm transition-all active:scale-[0.98]"
-                        style={{
-                          border: "1px solid rgba(29, 127, 226, 0.22)",
-                          opacity:
-                            isSending || isVoiceLoading || isSpeaking ? 0.5 : 1,
-                          cursor:
-                            isVoiceLoading || isSpeaking
-                              ? "not-allowed"
-                              : "pointer",
-                        }}
-                      >
-                        {isVoiceLoading &&
-                        voiceLoadingMessageIndex === index ? (
-                          <>
-                            <span>⏳</span>
-                            <span
-                              style={{
-                                marginLeft: "6px",
-                                color: "#1d7fe2",
-                                fontSize: "10px",
-                                fontWeight: 700,
-                                opacity: 0.9,
-                              }}
-                            >
-                              Loading voice...
-                            </span>
-                          </>
-                        ) : isSpeaking && speakingMessageIndex === index ? (
-                          <>
-                            <span>🔊</span>
-                            <span
-                              style={{
-                                marginLeft: "6px",
-                                color: "#118a3b",
-                                fontSize: "10px",
-                                fontWeight: 600,
-                                opacity: 0.85,
-                              }}
-                            >
-                              Elvy is speaking...
-                            </span>
-                          </>
-                        ) : (
-                          "🔊 Listen"
-                        )}
-                      </button>
-                    )}
                   </div>
                 </div>
               ))}
