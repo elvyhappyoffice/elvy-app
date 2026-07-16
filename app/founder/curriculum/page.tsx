@@ -58,6 +58,7 @@ type PendingReadyPackage = {
   level: Level;
   treeRecord: CurriculumTreeRecord;
   summary: ImportedPackageSummary;
+  cloudPackage: Record<string, unknown>;
 };
 
 const ACTIVE_LESSON_STUDIO_SYLLABUS_KEY = "elvy-active-lesson-studio-syllabus";
@@ -86,6 +87,7 @@ export default function CurriculumDashboard() {
   const [isLoading, setIsLoading] = useState(true);
   const [hasLoadedTrees, setHasLoadedTrees] = useState(false);
   const [isImportingReadyPackage, setIsImportingReadyPackage] = useState(false);
+  const [isConfirmingReadyPackage, setIsConfirmingReadyPackage] = useState(false);
   const [saveStatus, setSaveStatus] = useState("Loading curriculum...");
   const [packageStatus, setPackageStatus] = useState(
     "No GSRP imported in this session.",
@@ -218,8 +220,11 @@ export default function CurriculumDashboard() {
         lessons: importedTreeRecord.lessons,
         levelTitle: importedTreeRecord.levelTitle,
         importedAt: new Date().toISOString(),
-        packageId: imported.syllabusId,
-        packageVersion: "1.0",
+        packageId: imported.packageId,
+        packageVersion:
+          typeof imported.cloudPackage.packageVersion === "string"
+            ? imported.cloudPackage.packageVersion
+            : "1.0",
         source: "Happy Office Curriculum Engineering",
       };
 
@@ -230,6 +235,7 @@ export default function CurriculumDashboard() {
           generatedAt: summary.importedAt,
         },
         summary,
+        cloudPackage: imported.cloudPackage,
       });
       setLastImportedPackage(summary);
 
@@ -251,37 +257,76 @@ export default function CurriculumDashboard() {
     }
   }
 
-  function confirmReadyPackageImport() {
-    if (!pendingReadyPackage) return;
+  async function confirmReadyPackageImport() {
+    if (!pendingReadyPackage || isConfirmingReadyPackage) return;
 
-    const { level, treeRecord, summary } = pendingReadyPackage;
+    const { level, treeRecord, summary, cloudPackage } =
+      pendingReadyPackage;
 
-    setLevels((previousLevels) => [
-      level,
-      ...previousLevels.filter((item) => item.id !== level.id),
-    ]);
+    try {
+      setIsConfirmingReadyPackage(true);
+      setSaveStatus("Saving GSRP to Elvy Cloud...");
+      setPackageStatus(
+        "Writing the package, curriculum hierarchy, lesson plans, blueprints, and asset metadata to Supabase...",
+      );
 
-    setCurriculumTreeRecords((previousRecords) => [
-      treeRecord,
-      ...previousRecords.filter(
-        (record) => record.syllabusId !== treeRecord.syllabusId,
-      ),
-    ]);
+      const response = await fetch("/api/elvy-packages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(cloudPackage),
+      });
 
-    window.localStorage.setItem(
-      ACTIVE_LESSON_STUDIO_SYLLABUS_KEY,
-      summary.syllabusId,
-    );
+      const data = await response.json();
 
-    setSaveStatus(`GSRP imported: ${summary.title}.`);
-    setPackageStatus(
-      `${summary.units} unit${summary.units === 1 ? "" : "s"} and ${
-        summary.lessons
-      } lesson${summary.lessons === 1 ? "" : "s"} are ready in Lesson Plan Studio.`,
-    );
+      if (!response.ok || !data?.success) {
+        throw new Error(
+          data?.error ||
+            data?.message ||
+            "The GSRP could not be saved to Elvy Cloud.",
+        );
+      }
 
-    setPendingReadyPackage(null);
-    setLastImportedPackage(null);
+      setLevels((previousLevels) => [
+        level,
+        ...previousLevels.filter((item) => item.id !== level.id),
+      ]);
+
+      setCurriculumTreeRecords((previousRecords) => [
+        treeRecord,
+        ...previousRecords.filter(
+          (record) => record.syllabusId !== treeRecord.syllabusId,
+        ),
+      ]);
+
+      window.localStorage.setItem(
+        ACTIVE_LESSON_STUDIO_SYLLABUS_KEY,
+        summary.syllabusId,
+      );
+
+      setSaveStatus(`Saved to Elvy Cloud: ${summary.title}.`);
+      setPackageStatus(
+        `${summary.units} unit${summary.units === 1 ? "" : "s"} and ${
+          summary.lessons
+        } lesson${summary.lessons === 1 ? "" : "s"} were stored in Supabase and are ready in Lesson Plan Studio.`,
+      );
+
+      setPendingReadyPackage(null);
+      setLastImportedPackage(null);
+    } catch (error) {
+      console.error("Elvy Cloud package save failed:", error);
+      const message =
+        error instanceof Error
+          ? error.message
+          : "The GSRP could not be saved to Elvy Cloud.";
+
+      setSaveStatus("Cloud save failed.");
+      setPackageStatus(message);
+      alert(message);
+    } finally {
+      setIsConfirmingReadyPackage(false);
+    }
   }
 
   function openLessonPlanStudio(record: CurriculumTreeRecord) {
@@ -373,6 +418,7 @@ export default function CurriculumDashboard() {
         .crd-profile-label { color: #64748b; font-weight: 850; }
         .crd-profile-value { color: #172033; font-weight: 900; overflow-wrap: anywhere; }
         .crd-confirm { margin-top: 22px; width: 100%; border: 0; border-radius: 11px; background: linear-gradient(100deg,#07894e,#06ae6e); color: white; padding: 14px 18px; font-size: 16px; font-weight: 950; cursor: pointer; box-shadow: 0 12px 24px rgba(5,150,92,.2); }
+        .crd-confirm:disabled { cursor: not-allowed; opacity: .68; }
         .crd-confirm-note { margin-top: 10px; text-align: center; color: #53627a; font-size: 12px; font-weight: 750; }
         .crd-profile-empty { margin-top: 22px; min-height: 310px; border: 1px solid #d8e1ec; border-radius: 16px; display: grid; place-items: center; text-align: center; color: #64748b; font-weight: 850; }
         .crd-tree { margin-top: 24px; border: 1px solid #e1e8f0; border-radius: 22px; background: white; padding: 24px; box-shadow: 0 15px 35px rgba(15,23,42,.08); }
@@ -530,8 +576,11 @@ export default function CurriculumDashboard() {
                   type="button"
                   className="crd-confirm"
                   onClick={confirmReadyPackageImport}
+                  disabled={isConfirmingReadyPackage}
                 >
-                  ✓ Confirm Import
+                  {isConfirmingReadyPackage
+                    ? "☁ Saving to Elvy Cloud..."
+                    : "✓ Confirm Import"}
                 </button>
                 <div className="crd-confirm-note">
                   Click to confirm and make this package ready to open in Lesson Plan Studio.

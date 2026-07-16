@@ -148,6 +148,57 @@ export type ImportedReadyPackage = {
     generatedAt: string;
     status: "Generated";
   };
+  cloudPackage: {
+    packageId: string;
+    syllabusId: string;
+    title: string;
+    packageVersion: string;
+    schemaVersion: number;
+    packageType: "GSRP";
+    subjectCode: string;
+    subjectSlug: string;
+    language: string;
+    educationLevel?: string;
+    schoolGrade?: string;
+    targetStage?: string;
+    publicSummary?: string;
+    targetAudience: string[];
+    originalFilename: string;
+    importedBy: string;
+    createdBy: string;
+    level: {
+      id: string;
+      title: string;
+      sublevels: Array<{
+        id: string;
+        title: string;
+        units: Array<{
+          id: string;
+          title: string;
+          order: number;
+          lessons: Array<{
+            id: string;
+            title: string;
+            lessonNumber?: string;
+            pageRange?: string;
+            duration?: string;
+            order: number;
+            lessonPlanData: Record<string, unknown>;
+            blueprintData: Record<string, unknown>;
+            teachingAssets: ReadyPackageAsset[];
+          }>;
+        }>;
+      }>;
+    };
+    validation: {
+      status: "passed" | "passed_with_warnings";
+      engineVersion: string;
+      warnings: unknown[];
+      errors: unknown[];
+      checks: Record<string, unknown>;
+      missingSections: unknown[];
+    };
+  };
 };
 
 export async function importReadyPackageZip(
@@ -353,11 +404,99 @@ export async function importReadyPackageZip(
     teachingAssetsReady: assets.length > 0,
   } as any);
 
+  const cloudPackage = {
+    packageId: manifest.packageId,
+    syllabusId,
+    title: manifest.title,
+    packageVersion: String(
+      (manifest as { packageVersion?: unknown }).packageVersion || "1.0",
+    ),
+    schemaVersion: Number(
+      (manifest as { schemaVersion?: unknown }).schemaVersion || 1,
+    ),
+    packageType: "GSRP" as const,
+    subjectCode: "ENG",
+    subjectSlug: "english",
+    language: manifest.language || "English",
+    educationLevel: manifest.level || undefined,
+    schoolGrade: manifest.schoolLevel || undefined,
+    targetStage: manifest.targetStage || undefined,
+    publicSummary: manifest.publicSummary || undefined,
+    targetAudience: Array.isArray(manifest.targetAudience)
+      ? manifest.targetAudience
+      : [],
+    originalFilename: file.name,
+    importedBy: "Founder",
+    createdBy: manifest.createdBy || "Happy Office",
+    level: {
+      id: level.id,
+      title: level.title,
+      sublevels: level.sublevels.map((sublevel) => ({
+        id: sublevel.id,
+        title: sublevel.title,
+        units: sublevel.units.map((unit, unitIndex) => ({
+          id: unit.id,
+          title: unit.title,
+          order: unitIndex + 1,
+          lessons: unit.lessons.map((lesson, lessonIndex) => {
+            const plan = lesson.lessonPlanData;
+            return {
+              id: lesson.id,
+              title: lesson.title,
+              lessonNumber:
+                typeof plan.lessonNumber === "string"
+                  ? plan.lessonNumber
+                  : undefined,
+              pageRange: lesson.pageRange,
+              duration:
+                typeof plan.duration === "string"
+                  ? plan.duration
+                  : undefined,
+              order: lessonIndex + 1,
+              lessonPlanData: plan,
+              blueprintData: {
+                stages: Array.isArray(plan.elvyBlueprint)
+                  ? plan.elvyBlueprint
+                  : [],
+                teachingRules:
+                  plan.elvyTeachingRules &&
+                  typeof plan.elvyTeachingRules === "object"
+                    ? plan.elvyTeachingRules
+                    : {},
+              },
+              teachingAssets: Array.isArray(plan.teachingAssets)
+                ? (plan.teachingAssets as ReadyPackageAsset[])
+                : [],
+            };
+          }),
+        })),
+      })),
+    },
+    validation: {
+      status:
+        validation.warnings.length > 0
+          ? ("passed_with_warnings" as const)
+          : ("passed" as const),
+      engineVersion: "elvy-ready-package-validator-v1",
+      warnings: validation.warnings,
+      errors: validation.errors,
+      checks: {
+        manifest: true,
+        curriculum: true,
+        teacherPlans: true,
+        elvyBlueprints: true,
+        assets: true,
+      },
+      missingSections: [],
+    },
+  };
+
   return {
     packageId: manifest.packageId,
     syllabusId,
     title: manifest.title,
     level,
     treeRecord,
+    cloudPackage,
   };
 }
