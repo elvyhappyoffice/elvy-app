@@ -32,12 +32,17 @@ function saveAccounts(accounts: any[]) {
   fs.writeFileSync(ACCOUNTS_FILE, JSON.stringify(accounts, null, 2));
 }
 
-async function updateAccountTicket(user: any, repliesLeft: number) {
+async function updateAccountTicket(
+  user: any,
+  repliesLeft: number,
+  secondsRemaining: number
+) {
   if (process.env.VERCEL) {
     const { error } = await supabase
       .from("elvy_accounts")
       .update({
         credits_left: repliesLeft,
+        seconds_remaining: secondsRemaining,
         ticket_status: "Active",
         activated_at: new Date().toISOString(),
       })
@@ -70,6 +75,7 @@ async function updateAccountTicket(user: any, repliesLeft: number) {
         user.name ||
         account.username,
       creditsLeft: repliesLeft,
+      secondsRemaining,
       ticketStatus: "Active",
       activatedAt: new Date().toISOString(),
     };
@@ -85,6 +91,10 @@ function mapSupabaseUser(user: any) {
     status: user.status || "Pending",
     repliesLimit: Number(user.replies_limit || 0),
     repliesUsed: Number(user.replies_used || 0),
+    ticketType: user.ticket_type || "Starter",
+    ticketHours: Number(user.ticket_hours || 0),
+    secondsRemaining: Number(user.seconds_remaining || 0),
+    secondsUsed: Number(user.seconds_used || 0),
     paid: Boolean(user.paid),
     paymentStatus: user.payment_status || "Unpaid",
   };
@@ -150,14 +160,23 @@ const code = fullCode.includes("-")
   const repliesUsed = Number(user.repliesUsed || 0);
   const repliesLeft = Math.max(repliesLimit - repliesUsed, 0);
 
-  if (repliesLeft <= 0) {
+  const ticketHours = Number(user.ticketHours || 0);
+  const secondsUsed = Number(user.secondsUsed || 0);
+  const storedSecondsRemaining = Number(user.secondsRemaining || 0);
+
+  const secondsRemaining =
+    storedSecondsRemaining > 0
+      ? storedSecondsRemaining
+      : Math.max(ticketHours * 3600 - secondsUsed, 0);
+
+  if (secondsRemaining <= 0) {
     return NextResponse.json({
       success: false,
-      message: "This ticket has no credits left.",
+      message: "This ticket has no time left.",
     });
   }
 
-  await updateAccountTicket(user, repliesLeft);
+  await updateAccountTicket(user, repliesLeft, secondsRemaining);
 
   return NextResponse.json({
     success: true,
@@ -168,6 +187,10 @@ const code = fullCode.includes("-")
       repliesLimit,
       repliesUsed,
       repliesLeft,
+      ticketType: user.ticketType || "Starter",
+      ticketHours,
+      secondsRemaining,
+      secondsUsed,
       status: user.status,
     },
   });

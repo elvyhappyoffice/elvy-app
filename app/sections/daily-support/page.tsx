@@ -43,6 +43,10 @@ type SupportUser = {
   status: UserStatus;
   repliesLimit: number;
   repliesUsed: number;
+  secondsRemaining?: number;
+  secondsUsed?: number;
+  ticketName?: string;
+  ticketHours?: number;
   aiCost: number;
   contactCost: number;
   startDate: string;
@@ -96,26 +100,80 @@ function uniqueList(items: string[]) {
   return Array.from(new Set(items.filter(Boolean))).slice(-12);
 }
 
+function hoursToSeconds(hours: number) {
+  return Math.max(0, Math.floor(Number(hours || 0) * 3600));
+}
+
+function formatTicketTime(seconds: number) {
+  const safeSeconds = Math.max(0, Math.floor(Number(seconds) || 0));
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+
+  if (hours <= 0) return `${minutes}m`;
+  return `${hours}h ${String(minutes).padStart(2, "0")}m`;
+}
+
+function getTicketName(user: SupportUser) {
+  return user.ticketName || "Starter";
+}
+
+function getTicketHours(user: SupportUser) {
+  return Number(user.ticketHours || 15);
+}
+
+function getRemainingSeconds(user: SupportUser) {
+  return Math.max(
+    0,
+    Number(user.secondsRemaining ?? hoursToSeconds(getTicketHours(user))),
+  );
+}
+
+function getUsedSeconds(user: SupportUser) {
+  return Math.max(0, Number(user.secondsUsed ?? 0));
+}
+
 function detectElvyIntent(message: string) {
   const text = message.toLowerCase();
 
-  if (text.includes("remind") || text.includes("don't forget") || text.includes("appointment")) {
+  if (
+    text.includes("remind") ||
+    text.includes("don't forget") ||
+    text.includes("appointment")
+  ) {
     return "reminder";
   }
 
-  if (text.includes("routine") || text.includes("daily") || text.includes("schedule")) {
+  if (
+    text.includes("routine") ||
+    text.includes("daily") ||
+    text.includes("schedule")
+  ) {
     return "routine";
   }
 
-  if (text.includes("prefer") || text.includes("usually") || text.includes("as usual")) {
+  if (
+    text.includes("prefer") ||
+    text.includes("usually") ||
+    text.includes("as usual")
+  ) {
     return "preference";
   }
 
-  if (text.includes("tired") || text.includes("stress") || text.includes("problem") || text.includes("worried")) {
+  if (
+    text.includes("tired") ||
+    text.includes("stress") ||
+    text.includes("problem") ||
+    text.includes("worried")
+  ) {
     return "support";
   }
 
-  if (text.includes("family") || text.includes("mother") || text.includes("father") || text.includes("child")) {
+  if (
+    text.includes("family") ||
+    text.includes("mother") ||
+    text.includes("father") ||
+    text.includes("child")
+  ) {
     return "family";
   }
 
@@ -123,7 +181,9 @@ function detectElvyIntent(message: string) {
 }
 
 function extractTime(message: string) {
-  const timeMatch = message.match(/\b([01]?\d|2[0-3])(?::([0-5]\d))?\s?(am|pm)?\b/i);
+  const timeMatch = message.match(
+    /\b([01]?\d|2[0-3])(?::([0-5]\d))?\s?(am|pm)?\b/i,
+  );
   if (!timeMatch) return undefined;
 
   const hour = timeMatch[1];
@@ -154,7 +214,8 @@ function extractFrequency(message: string) {
 
   if (text.includes("every day") || text.includes("daily")) return "daily";
   if (text.includes("every week") || text.includes("weekly")) return "weekly";
-  if (text.includes("every month") || text.includes("monthly")) return "monthly";
+  if (text.includes("every month") || text.includes("monthly"))
+    return "monthly";
   if (text.includes("every friday")) return "weekly-friday";
 
   return undefined;
@@ -204,19 +265,31 @@ function buildUpdatedMemory(user: SupportUser, message: string): UserMemory {
   }
 
   if (intent === "support") {
-    nextMemory.patterns = uniqueList([...nextMemory.patterns, "needs calm support"]);
+    nextMemory.patterns = uniqueList([
+      ...nextMemory.patterns,
+      "needs calm support",
+    ]);
   }
 
   if (intent === "family") {
-    nextMemory.patterns = uniqueList([...nextMemory.patterns, "family-related support"]);
+    nextMemory.patterns = uniqueList([
+      ...nextMemory.patterns,
+      "family-related support",
+    ]);
   }
 
   if (intent === "routine") {
-    nextMemory.patterns = uniqueList([...nextMemory.patterns, "routine organization"]);
+    nextMemory.patterns = uniqueList([
+      ...nextMemory.patterns,
+      "routine organization",
+    ]);
   }
 
   if (message.length <= MAX_USER_MESSAGE_LENGTH) {
-    nextMemory.notes = uniqueList([...nextMemory.notes, `${intent}: ${message.slice(0, 90)}`]);
+    nextMemory.notes = uniqueList([
+      ...nextMemory.notes,
+      `${intent}: ${message.slice(0, 90)}`,
+    ]);
   }
 
   return nextMemory;
@@ -226,14 +299,20 @@ function getMemorySummary(memory?: UserMemory) {
   if (!memory) return "No memory yet";
 
   const parts = [];
-  if (memory.reminders?.length) parts.push(`${memory.reminders.length} reminder(s)`);
-  if (memory.preferences?.preferredTime) parts.push(`prefers ${memory.preferences.preferredTime}`);
+  if (memory.reminders?.length)
+    parts.push(`${memory.reminders.length} reminder(s)`);
+  if (memory.preferences?.preferredTime)
+    parts.push(`prefers ${memory.preferences.preferredTime}`);
   if (memory.patterns?.length) parts.push(memory.patterns.slice(-2).join(", "));
 
   return parts.length ? parts.join(" • ") : "Memory ready";
 }
 
-function getElvyMemoryReply(message: string, user: SupportUser, memory: UserMemory) {
+function getElvyMemoryReply(
+  message: string,
+  user: SupportUser,
+  memory: UserMemory,
+) {
   const intent = detectElvyIntent(message);
   const preferredTime = memory.preferences?.preferredTime;
   const lastReminder = memory.reminders?.[memory.reminders.length - 1];
@@ -242,7 +321,10 @@ function getElvyMemoryReply(message: string, user: SupportUser, memory: UserMemo
     return "That is a lot to carry at once. Let’s take one step together. Please share one short message so I can understand you clearly.";
   }
 
-  if (message.toLowerCase().includes(" and ") || message.split("?").length > 2) {
+  if (
+    message.toLowerCase().includes(" and ") ||
+    message.split("?").length > 2
+  ) {
     return "I see more than one thing here. Let’s begin with one. What matters most now?";
   }
 
@@ -300,7 +382,9 @@ export default function DailySupportPage() {
   const [chatInput, setChatInput] = useState("");
   const [storageReady, setStorageReady] = useState(false);
   const [openAdminChats, setOpenAdminChats] = useState<string[]>([]);
-  const [adminReplyInputs, setAdminReplyInputs] = useState<Record<string, string>>({});
+  const [adminReplyInputs, setAdminReplyInputs] = useState<
+    Record<string, string>
+  >({});
 
   useEffect(() => {
     setRole(localStorage.getItem("adminRole"));
@@ -347,7 +431,8 @@ export default function DailySupportPage() {
     localStorage.setItem(CODE_GEN_KEY, String(codeGenerationOpen));
   }, [codeGenerationOpen]);
 
-  const isAdmin = role === "founder" || (role === "admin" && room === "daily-support");
+  const isAdmin =
+    role === "founder" || (role === "admin" && room === "daily-support");
 
   function generateCode() {
     const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -366,7 +451,9 @@ export default function DailySupportPage() {
 
   function updateUser(code: string, changes: Partial<SupportUser>) {
     setUsers((prev) => {
-      const updated = prev.map((u) => (u.code === code ? { ...u, ...changes } : u));
+      const updated = prev.map((u) =>
+        u.code === code ? { ...u, ...changes } : u,
+      );
       saveUsersToServer(updated);
       return updated;
     });
@@ -407,10 +494,14 @@ export default function DailySupportPage() {
           if (user.contactMethod !== "Telegram") return user;
 
           const userContact = user.contactValue.trim().toLowerCase();
-          const normalizedUserContact = userContact.startsWith("@") ? userContact : `@${userContact}`;
+          const normalizedUserContact = userContact.startsWith("@")
+            ? userContact
+            : `@${userContact}`;
 
           const match = data.users.find(
-            (tg: any) => String(tg.username).trim().toLowerCase() === normalizedUserContact
+            (tg: any) =>
+              String(tg.username).trim().toLowerCase() ===
+              normalizedUserContact,
           );
 
           if (!match) return user;
@@ -434,12 +525,16 @@ export default function DailySupportPage() {
 
   async function createUser() {
     if (!roomOpen) {
-      window.alert("Daily Support is currently closed. Please try again later.");
+      window.alert(
+        "Daily Support is currently closed. Please try again later.",
+      );
       return;
     }
 
     if (!codeGenerationOpen) {
-      window.alert("Code generation is currently closed. Please try again later.");
+      window.alert(
+        "Code generation is currently closed. Please try again later.",
+      );
       return;
     }
 
@@ -449,7 +544,9 @@ export default function DailySupportPage() {
     }
 
     if (!contactValue.trim()) {
-      window.alert("Please add your Telegram username first. Example: @username");
+      window.alert(
+        "Please add your Telegram username first. Example: @username",
+      );
       return;
     }
 
@@ -467,10 +564,15 @@ export default function DailySupportPage() {
       ageGroup,
       helpType: "General support",
       contactMethod,
-      contactValue: contactMethod === "Telegram" ? cleanTelegram : contactValue.trim(),
+      contactValue:
+        contactMethod === "Telegram" ? cleanTelegram : contactValue.trim(),
       status: "Pending",
       repliesLimit: 100,
       repliesUsed: 0,
+      ticketName: "Starter",
+      ticketHours: 15,
+      secondsRemaining: hoursToSeconds(15),
+      secondsUsed: 0,
       aiCost: 0,
       contactCost: 0,
       startDate: today.toLocaleDateString(),
@@ -496,7 +598,9 @@ export default function DailySupportPage() {
 
     saveUsersToServer(updatedUsers).catch((error) => {
       console.log("Daily Support save error:", error);
-      window.alert("The code was shown, but saving to the server failed. Please check /api/daily-support-users.");
+      window.alert(
+        "The code was shown, but saving to the server failed. Please check /api/daily-support-users.",
+      );
     });
 
     setName("");
@@ -522,10 +626,7 @@ export default function DailySupportPage() {
       updateUser(code, {
         status: "Setup Sent",
         setupAccessNumber: setupNumber,
-        adminMessages: [
-          ...(user.adminMessages || []),
-          mobileMessage,
-        ],
+        adminMessages: [...(user.adminMessages || []), mobileMessage],
         contactCost: user.contactCost,
       });
 
@@ -537,7 +638,7 @@ export default function DailySupportPage() {
     // TELEGRAM USERS: keep the old Telegram sending flow.
     if (user.contactMethod === "Telegram" && !user.telegramChatId) {
       alert(
-        "This Telegram user is not synced yet. Ask the user to start the bot, then click Sync Telegram Users."
+        "This Telegram user is not synced yet. Ask the user to start the bot, then click Sync Telegram Users.",
       );
 
       return;
@@ -551,10 +652,7 @@ export default function DailySupportPage() {
       `After opening the private chat, the team will guide you through activation.`;
 
     try {
-      const data = await sendTelegramMessage(
-        setupMessage,
-        user.telegramChatId
-      );
+      const data = await sendTelegramMessage(setupMessage, user.telegramChatId);
 
       if (!data.success) {
         alert("Telegram failed. Check token, chat ID, or route.");
@@ -567,10 +665,7 @@ export default function DailySupportPage() {
       updateUser(code, {
         status: "Setup Sent",
         setupAccessNumber: setupNumber,
-        adminMessages: [
-          ...(user.adminMessages || []),
-          setupMessage,
-        ],
+        adminMessages: [...(user.adminMessages || []), setupMessage],
         contactCost: user.contactCost + 0.01,
       });
 
@@ -585,10 +680,14 @@ export default function DailySupportPage() {
   function openPrivateChat() {
     const entered = activeCode.trim().toUpperCase();
 
-    const user = users.find((u) => `${u.code}-${u.setupAccessNumber}` === entered);
+    const user = users.find(
+      (u) => `${u.code}-${u.setupAccessNumber}` === entered,
+    );
 
     if (!user) {
-      alert("Chat access denied. Please enter the full code and access number sent to you.");
+      alert(
+        "Chat access denied. Please enter the full code and access number sent to you.",
+      );
       return;
     }
 
@@ -661,80 +760,81 @@ export default function DailySupportPage() {
     setChatInput("");
   }
 
-async function activateElvy(code: string) {
-  const user = users.find((u) => u.code === code);
+  async function activateElvy(code: string) {
+    const user = users.find((u) => u.code === code);
 
-  if (!user) return;
+    if (!user) return;
 
-  const elvyMessage =
-    `Hello ${user.name}.\n\n` +
-    `I am Elvy.\n\n` +
-    `Your support is now active. This space is calm, simple, and here to help you with clear and meaningful communication.\n\n` +
-    `Please send short and focused messages so I can understand you clearly.`;
+    const elvyMessage =
+      `Hello ${user.name}.\n\n` +
+      `I am Elvy.\n\n` +
+      `Your support is now active. This space is calm, simple, and here to help you with clear and meaningful communication.\n\n` +
+      `Please send short and focused messages so I can understand you clearly.`;
 
-  // MOBILE USERS
-  if (user.contactMethod === "Mobile") {
-    updateUser(code, {
-      status: "Active",
-      adminMessages: [
-        ...(user.adminMessages || []),
-        elvyMessage,
-      ],
-      contactCost: user.contactCost,
-      memory: user.memory || createEmptyMemory(),
-    });
+    // MOBILE USERS
+    if (user.contactMethod === "Mobile") {
+      updateUser(code, {
+        status: "Active",
+        ticketName: user.ticketName || "Starter",
+        ticketHours: Number(user.ticketHours || 15),
+        secondsRemaining: Number(
+          user.secondsRemaining ??
+            hoursToSeconds(Number(user.ticketHours || 15)),
+        ),
+        secondsUsed: Number(user.secondsUsed || 0),
+        adminMessages: [...(user.adminMessages || []), elvyMessage],
+        contactCost: user.contactCost,
+        memory: user.memory || createEmptyMemory(),
+      });
 
-    alert("Mobile Elvy activated successfully.");
-
-    return;
-  }
-
-  // TELEGRAM USERS
-  if (user.contactMethod === "Telegram" && !user.telegramChatId) {
-    alert(
-      "This user must be synced with Telegram before activating Elvy."
-    );
-
-    return;
-  }
-
-  try {
-    const data = await sendTelegramMessage(
-      elvyMessage,
-      user.telegramChatId
-    );
-
-    if (!data.success) {
-      alert(
-        "Elvy welcome message was not sent. Check Telegram connection."
-      );
-
-      console.log(data);
+      alert("Mobile Elvy activated successfully.");
 
       return;
     }
 
-    updateUser(code, {
-      status: "Active",
-      adminMessages: [
-        ...(user.adminMessages || []),
-        elvyMessage,
-      ],
-      contactCost: user.contactCost + 0.01,
-      memory: user.memory || createEmptyMemory(),
-    });
+    // TELEGRAM USERS
+    if (user.contactMethod === "Telegram" && !user.telegramChatId) {
+      alert("This user must be synced with Telegram before activating Elvy.");
 
-    alert("Elvy activated and welcome message sent.");
-  } catch (error) {
-    console.log(error);
+      return;
+    }
 
-    alert("Elvy activation failed.");
+    try {
+      const data = await sendTelegramMessage(elvyMessage, user.telegramChatId);
+
+      if (!data.success) {
+        alert("Elvy welcome message was not sent. Check Telegram connection.");
+
+        console.log(data);
+
+        return;
+      }
+
+      updateUser(code, {
+        status: "Active",
+        ticketName: user.ticketName || "Starter",
+        ticketHours: Number(user.ticketHours || 15),
+        secondsRemaining: Number(
+          user.secondsRemaining ??
+            hoursToSeconds(Number(user.ticketHours || 15)),
+        ),
+        secondsUsed: Number(user.secondsUsed || 0),
+        adminMessages: [...(user.adminMessages || []), elvyMessage],
+        contactCost: user.contactCost + 0.01,
+        memory: user.memory || createEmptyMemory(),
+      });
+
+      alert("Elvy activated and welcome message sent.");
+    } catch (error) {
+      console.log(error);
+
+      alert("Elvy activation failed.");
+    }
   }
-}
 
   function canDeleteUser(user: SupportUser) {
     if (user.status !== "Active") return true;
-    return user.repliesUsed >= user.repliesLimit;
+    return getRemainingSeconds(user) <= 0;
   }
 
   function deleteUser(code: string) {
@@ -763,7 +863,9 @@ async function activateElvy(code: string) {
   }
 
   function toggleAdminChat(code: string) {
-    setOpenAdminChats((prev) => (prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code]));
+    setOpenAdminChats((prev) =>
+      prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code],
+    );
   }
 
   function sendAdminReply(code: string) {
@@ -792,19 +894,27 @@ async function activateElvy(code: string) {
   }
 
   function statusBadge(status: UserStatus) {
-    if (status === "Active") return "bg-green-100 text-green-800 border-green-500";
+    if (status === "Active")
+      return "bg-green-100 text-green-800 border-green-500";
     if (status === "Blocked") return "bg-red-100 text-red-800 border-red-500";
-    if (status === "Suspended") return "bg-gray-100 text-gray-800 border-gray-500";
+    if (status === "Suspended")
+      return "bg-gray-100 text-gray-800 border-gray-500";
     return "bg-yellow-100 text-yellow-800 border-yellow-500";
   }
 
   const activeUsers = users.filter((u) => u.status === "Active").length;
 
   const waitingUsers = users.filter(
-    (u) => u.status === "Pending" || u.status === "Setup Sent" || u.status === "In Chat"
+    (u) =>
+      u.status === "Pending" ||
+      u.status === "Setup Sent" ||
+      u.status === "In Chat",
   ).length;
 
-  const totalReplies = users.reduce((s, u) => s + u.repliesUsed, 0);
+  const totalTimeUsed = users.reduce(
+    (sum, user) => sum + getUsedSeconds(user),
+    0,
+  );
 
   return (
     <main
@@ -838,7 +948,10 @@ async function activateElvy(code: string) {
             Dashboard
           </button>
 
-          <button onClick={logout} className="rounded-xl bg-black px-5 py-3 font-bold text-white">
+          <button
+            onClick={logout}
+            className="rounded-xl bg-black px-5 py-3 font-bold text-white"
+          >
             Logout
           </button>
         </div>
@@ -864,11 +977,17 @@ async function activateElvy(code: string) {
           >
             {/* LEFT CARD: Daily Support */}
             <div className="flex h-full flex-col justify-center overflow-hidden rounded-2xl bg-[#fffaf5] p-8 shadow">
-              <h1 className="text-4xl font-bold text-[#7a3b1d]">Daily Support</h1>
+              <h1 className="text-4xl font-bold text-[#7a3b1d]">
+                Daily Support
+              </h1>
 
-              <p className="mt-4 text-lg font-semibold">Welcome to Daily Support Room</p>
+              <p className="mt-4 text-lg font-semibold">
+                Welcome to Daily Support Room
+              </p>
 
-              <p className="mt-5 text-base font-semibold text-[#6b4428]">How it works</p>
+              <p className="mt-5 text-base font-semibold text-[#6b4428]">
+                How it works
+              </p>
 
               <p className="mt-2 text-base leading-relaxed text-[#6b4428]">
                 Add your details on the right to receive your access code.
@@ -878,27 +997,27 @@ async function activateElvy(code: string) {
                 You can also continue through Telegram:
               </p>
 
-<div className="mt-3">
-  <a
-    href={TELEGRAM_BOT_LINK}
-    target="_blank"
-    rel="noopener noreferrer"
-    style={{
-      display: "block",
-      width: "100%",
-      backgroundColor: "#229ED9",
-      color: "white",
-      textAlign: "center",
-      padding: "14px",
-      borderRadius: "12px",
-      fontWeight: "bold",
-      fontSize: "16px",
-      textDecoration: "none",
-    }}
-  >
-    Telegram Support
-  </a>
-</div>
+              <div className="mt-3">
+                <a
+                  href={TELEGRAM_BOT_LINK}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    backgroundColor: "#229ED9",
+                    color: "white",
+                    textAlign: "center",
+                    padding: "14px",
+                    borderRadius: "12px",
+                    fontWeight: "bold",
+                    fontSize: "16px",
+                    textDecoration: "none",
+                  }}
+                >
+                  Telegram Support
+                </a>
+              </div>
 
               <p className="mt-6 text-base leading-relaxed text-[#6b4428]">
                 WhatsApp support will be available soon.
@@ -916,10 +1035,13 @@ async function activateElvy(code: string) {
             {/* RIGHT CARD: User Form + Access Code */}
             <div className="flex h-full flex-col gap-4 overflow-hidden">
               <div className="rounded-2xl bg-white/95 p-5 shadow">
-                <h2 className="text-2xl font-bold text-[#7a3b1d]">Tell me about you</h2>
+                <h2 className="text-2xl font-bold text-[#7a3b1d]">
+                  Tell me about you
+                </h2>
 
                 <p className="mt-1 text-sm">
-                  Add simple details so Happy Office can prepare your access code.
+                  Add simple details so Happy Office can prepare your access
+                  code.
                 </p>
 
                 <input
@@ -952,7 +1074,11 @@ async function activateElvy(code: string) {
                 <input
                   value={contactValue}
                   onChange={(e) => setContactValue(e.target.value)}
-                  placeholder={contactMethod === "Telegram" ? "Telegram username, example: @username" : "WhatsApp number"}
+                  placeholder={
+                    contactMethod === "Telegram"
+                      ? "Telegram username, example: @username"
+                      : "WhatsApp number"
+                  }
                   className="mt-2 w-full rounded-xl border border-[#7a3b1d] px-4 py-2"
                 />
 
@@ -970,8 +1096,9 @@ async function activateElvy(code: string) {
                 </h2>
 
                 <p className="mt-1 text-sm">
-                  If you already have your access code and number, enter them here. If not, generate your access code
-                  first. Happy Office team will then send your access number.
+                  If you already have your access code and number, enter them
+                  here. If not, generate your access code first. Happy Office
+                  team will then send your access number.
                 </p>
 
                 <input
@@ -988,7 +1115,9 @@ async function activateElvy(code: string) {
                   Continue
                 </button>
 
-                <p className="mt-2 text-sm">Your code is personal. Please do not share it with others.</p>
+                <p className="mt-2 text-sm">
+                  Your code is personal. Please do not share it with others.
+                </p>
               </div>
             </div>
           </div>
@@ -999,8 +1128,12 @@ async function activateElvy(code: string) {
         <div className="fixed right-6 top-[16%] z-50 h-[74%] w-[720px] rounded-2xl bg-white p-5 shadow-2xl">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h2 className="text-xl font-bold text-[#7a3b1d]">Private Chat with Happy Office</h2>
-              <p className="text-sm font-semibold text-[#4b2a12]">Code: {openedUser.code}</p>
+              <h2 className="text-xl font-bold text-[#7a3b1d]">
+                Private Chat with Happy Office
+              </h2>
+              <p className="text-sm font-semibold text-[#4b2a12]">
+                Code: {openedUser.code}
+              </p>
             </div>
 
             <button
@@ -1014,7 +1147,9 @@ async function activateElvy(code: string) {
 
           <div className="mt-4 grid h-[52%] grid-cols-2 gap-4">
             <div className="h-full overflow-y-auto rounded-xl border bg-white p-4">
-              <p className="mb-3 text-sm font-bold text-[#7a3b1d]">Your messages</p>
+              <p className="mb-3 text-sm font-bold text-[#7a3b1d]">
+                Your messages
+              </p>
 
               {(openedUser.privateUserMessages || []).length === 0 ? (
                 <div className="rounded-xl bg-[#f7efe6] p-3 text-sm">
@@ -1022,7 +1157,10 @@ async function activateElvy(code: string) {
                 </div>
               ) : (
                 (openedUser.privateUserMessages || []).map((m, i) => (
-                  <div key={`private-user-${i}`} className="mb-3 rounded-xl bg-[#f7efe6] p-3 shadow">
+                  <div
+                    key={`private-user-${i}`}
+                    className="mb-3 rounded-xl bg-[#f7efe6] p-3 shadow"
+                  >
                     {m}
                   </div>
                 ))
@@ -1030,7 +1168,9 @@ async function activateElvy(code: string) {
             </div>
 
             <div className="h-full overflow-y-auto rounded-xl border bg-[#faf7f2] p-4">
-              <p className="mb-3 text-sm font-bold text-[#7a3b1d]">Happy Office replies</p>
+              <p className="mb-3 text-sm font-bold text-[#7a3b1d]">
+                Happy Office replies
+              </p>
 
               {(openedUser.privateAdminMessages || []).length === 0 ? (
                 <div className="rounded-xl bg-white p-3 text-sm shadow">
@@ -1038,7 +1178,10 @@ async function activateElvy(code: string) {
                 </div>
               ) : (
                 (openedUser.privateAdminMessages || []).map((m, i) => (
-                  <div key={`private-admin-${i}`} className="mb-3 whitespace-pre-line rounded-xl bg-[#7a3b1d] p-3 text-white">
+                  <div
+                    key={`private-admin-${i}`}
+                    className="mb-3 whitespace-pre-line rounded-xl bg-[#7a3b1d] p-3 text-white"
+                  >
                     {m}
                   </div>
                 ))
@@ -1054,11 +1197,16 @@ async function activateElvy(code: string) {
             className="mt-4 h-24 w-full rounded-xl border px-4 py-3"
           />
 
-          <p className={`mt-1 text-sm font-semibold ${chatInput.length > MAX_USER_MESSAGE_LENGTH ? "text-red-700" : "text-gray-600"}`}>
+          <p
+            className={`mt-1 text-sm font-semibold ${chatInput.length > MAX_USER_MESSAGE_LENGTH ? "text-red-700" : "text-gray-600"}`}
+          >
             {chatInput.length}/{MAX_USER_MESSAGE_LENGTH}
           </p>
 
-          <button onClick={sendUserChatMessage} className="mt-3 rounded-xl bg-[#7a3b1d] px-6 py-3 font-bold text-white">
+          <button
+            onClick={sendUserChatMessage}
+            className="mt-3 rounded-xl bg-[#7a3b1d] px-6 py-3 font-bold text-white"
+          >
             Send
           </button>
         </div>
@@ -1067,21 +1215,33 @@ async function activateElvy(code: string) {
       {dashboardOpen && isAdmin && (
         <section className="absolute left-[4%] top-[12%] z-30 h-[84%] w-[92%] overflow-hidden rounded-3xl bg-white/95 p-8 shadow-2xl">
           <div className="h-full overflow-y-auto">
-            <h1 className="text-4xl font-bold text-[#7a3b1d]">Daily Support Dashboard</h1>
+            <h1 className="text-4xl font-bold text-[#7a3b1d]">
+              Daily Support Dashboard
+            </h1>
 
             <div className="mt-6 grid grid-cols-6 gap-4">
               <div className="rounded-xl bg-white p-4 shadow">
                 <p>Room</p>
-                <p className="text-2xl font-bold">{roomOpen ? "Open" : "Closed"}</p>
-                <button onClick={() => setRoomOpen(!roomOpen)} className="mt-3 rounded bg-[#7a3b1d] px-4 py-2 text-white">
+                <p className="text-2xl font-bold">
+                  {roomOpen ? "Open" : "Closed"}
+                </p>
+                <button
+                  onClick={() => setRoomOpen(!roomOpen)}
+                  className="mt-3 rounded bg-[#7a3b1d] px-4 py-2 text-white"
+                >
                   {roomOpen ? "Close Room" : "Open Room"}
                 </button>
               </div>
 
               <div className="rounded-xl bg-white p-4 shadow">
                 <p>Code Generation</p>
-                <p className="text-2xl font-bold">{codeGenerationOpen ? "Open" : "Closed"}</p>
-                <button onClick={() => setCodeGenerationOpen(!codeGenerationOpen)} className="mt-3 rounded bg-black px-4 py-2 text-white">
+                <p className="text-2xl font-bold">
+                  {codeGenerationOpen ? "Open" : "Closed"}
+                </p>
+                <button
+                  onClick={() => setCodeGenerationOpen(!codeGenerationOpen)}
+                  className="mt-3 rounded bg-black px-4 py-2 text-white"
+                >
                   {codeGenerationOpen ? "Close Codes" : "Open Codes"}
                 </button>
               </div>
@@ -1089,7 +1249,10 @@ async function activateElvy(code: string) {
               <div className="rounded-xl bg-white p-4 shadow">
                 <p>Telegram</p>
                 <p className="text-2xl font-bold">Sync Users</p>
-                <button onClick={syncTelegramUsers} className="mt-3 rounded bg-blue-700 px-4 py-2 text-white">
+                <button
+                  onClick={syncTelegramUsers}
+                  className="mt-3 rounded bg-blue-700 px-4 py-2 text-white"
+                >
                   Sync Telegram Users
                 </button>
               </div>
@@ -1111,7 +1274,9 @@ async function activateElvy(code: string) {
             </div>
 
             <div className="mt-8 overflow-x-auto rounded-2xl bg-white p-5 shadow">
-              <h2 className="text-2xl font-bold text-[#7a3b1d]">User Requests</h2>
+              <h2 className="text-2xl font-bold text-[#7a3b1d]">
+                User Requests
+              </h2>
 
               <table className="mt-4 w-full min-w-[1500px] text-sm">
                 <thead>
@@ -1124,7 +1289,8 @@ async function activateElvy(code: string) {
                     <th className="p-3 text-left">Contact</th>
                     <th className="p-3 text-left">Telegram ID</th>
                     <th className="p-3 text-left">Status</th>
-                    <th className="p-3 text-left">Replies</th>
+                    <th className="p-3 text-left">Ticket</th>
+                    <th className="p-3 text-left">Remaining</th>
                     <th className="p-3 text-left">Controls</th>
                   </tr>
                 </thead>
@@ -1134,7 +1300,9 @@ async function activateElvy(code: string) {
                     <Fragment key={`${u.code}-${index}`}>
                       <tr className={`border-b ${rowColor(u.status)}`}>
                         <td className="p-3 font-bold">{u.code}</td>
-                        <td className="p-3 font-bold">{u.setupAccessNumber || "Not sent"}</td>
+                        <td className="p-3 font-bold">
+                          {u.setupAccessNumber || "Not sent"}
+                        </td>
                         <td className="p-3">{u.name}</td>
                         <td className="p-3">{u.ageGroup}</td>
                         <td className="p-3">{u.helpType}</td>
@@ -1143,9 +1311,13 @@ async function activateElvy(code: string) {
                         </td>
                         <td className="p-3">
                           {u.telegramChatId ? (
-                            <span className="rounded bg-green-100 px-2 py-1 font-bold text-green-800">Synced</span>
+                            <span className="rounded bg-green-100 px-2 py-1 font-bold text-green-800">
+                              Synced
+                            </span>
                           ) : u.contactMethod === "Telegram" ? (
-                            <span className="rounded bg-red-100 px-2 py-1 font-bold text-red-800">Not synced</span>
+                            <span className="rounded bg-red-100 px-2 py-1 font-bold text-red-800">
+                              Not synced
+                            </span>
                           ) : (
                             <span className="text-gray-500">—</span>
                           )}
@@ -1163,36 +1335,96 @@ async function activateElvy(code: string) {
                               In Chat
                             </button>
                           ) : (
-                            <span className={`rounded-full border px-3 py-1 font-bold ${statusBadge(u.status)}`}>{u.status}</span>
+                            <span
+                              className={`rounded-full border px-3 py-1 font-bold ${statusBadge(u.status)}`}
+                            >
+                              {u.status}
+                            </span>
                           )}
                         </td>
                         <td className="p-3">
-                          <input
-                            type="number"
-                            value={u.repliesLimit}
-                            onChange={(e) =>
-                              updateUser(u.code, {
-                                repliesLimit: Number(e.target.value),
-                              })
-                            }
-                            className="w-24 rounded border px-2 py-1"
-                          />
-                          <span className="ml-2">used {u.repliesUsed}</span>
+                          <div className="flex flex-col gap-2">
+                            <select
+                              value={getTicketName(u)}
+                              onChange={(e) => {
+                                const ticketName = e.target.value;
+                                const ticketHours =
+                                  ticketName === "Standard"
+                                    ? 25
+                                    : ticketName === "Premium"
+                                      ? 50
+                                      : 15;
+
+                                updateUser(u.code, {
+                                  ticketName,
+                                  ticketHours,
+                                  secondsRemaining: hoursToSeconds(ticketHours),
+                                  secondsUsed: 0,
+                                });
+                              }}
+                              className="w-32 rounded border px-2 py-1 font-bold"
+                            >
+                              <option>Starter</option>
+                              <option>Standard</option>
+                              <option>Premium</option>
+                            </select>
+
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="number"
+                                value={getTicketHours(u)}
+                                onChange={(e) => {
+                                  const ticketHours = Number(e.target.value);
+                                  updateUser(u.code, {
+                                    ticketHours,
+                                    secondsRemaining:
+                                      hoursToSeconds(ticketHours),
+                                    secondsUsed: 0,
+                                  });
+                                }}
+                                className="w-20 rounded border px-2 py-1"
+                              />
+                              <span className="font-semibold">hours</span>
+                            </div>
+
+                            <span className="text-xs font-semibold text-gray-700">
+                              Used: {formatTicketTime(getUsedSeconds(u))}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="p-3 font-bold text-green-800">
+                          {formatTicketTime(getRemainingSeconds(u))}
                         </td>
                         <td className="space-x-2 p-3">
-                          <button onClick={() => sendSetupMessage(u.code)} className="rounded bg-blue-700 px-3 py-1 text-white">
+                          <button
+                            onClick={() => sendSetupMessage(u.code)}
+                            className="rounded bg-blue-700 px-3 py-1 text-white"
+                          >
                             Send Access
                           </button>
 
-                          <button onClick={() => activateElvy(u.code)} className="rounded bg-green-700 px-3 py-1 text-white">
-                            Activate Elvy
+                          <button
+                            onClick={() => activateElvy(u.code)}
+                            className="rounded bg-green-700 px-3 py-1 text-white"
+                          >
+                            Activate Ticket
                           </button>
 
-                          <button onClick={() => updateUser(u.code, { status: "Suspended" })} className="rounded bg-yellow-600 px-3 py-1 text-white">
+                          <button
+                            onClick={() =>
+                              updateUser(u.code, { status: "Suspended" })
+                            }
+                            className="rounded bg-yellow-600 px-3 py-1 text-white"
+                          >
                             Suspend
                           </button>
 
-                          <button onClick={() => updateUser(u.code, { status: "Blocked" })} className="rounded bg-red-700 px-3 py-1 text-white">
+                          <button
+                            onClick={() =>
+                              updateUser(u.code, { status: "Blocked" })
+                            }
+                            className="rounded bg-red-700 px-3 py-1 text-white"
+                          >
                             Block
                           </button>
 
@@ -1208,17 +1440,28 @@ async function activateElvy(code: string) {
 
                       {openAdminChats.includes(u.code) && (
                         <tr>
-                          <td colSpan={10} className="bg-[#f7efe6] p-4">
+                          <td colSpan={11} className="bg-[#f7efe6] p-4">
                             <div className="rounded-2xl border bg-white p-5 shadow">
                               <div className="flex items-start justify-between gap-4">
                                 <div>
-                                  <h3 className="text-xl font-bold text-[#7a3b1d]">Chat with {u.name}</h3>
-                                  <p className="text-sm font-semibold text-[#4b2a12]">Help selected: {u.helpType}</p>
-                                  <p className="text-sm font-semibold text-[#4b2a12]">Memory: {getMemorySummary(u.memory)}</p>
-                                  <p className="text-sm font-semibold text-[#4b2a12]">Code: {u.code}</p>
+                                  <h3 className="text-xl font-bold text-[#7a3b1d]">
+                                    Chat with {u.name}
+                                  </h3>
+                                  <p className="text-sm font-semibold text-[#4b2a12]">
+                                    Help selected: {u.helpType}
+                                  </p>
+                                  <p className="text-sm font-semibold text-[#4b2a12]">
+                                    Memory: {getMemorySummary(u.memory)}
+                                  </p>
+                                  <p className="text-sm font-semibold text-[#4b2a12]">
+                                    Code: {u.code}
+                                  </p>
                                 </div>
 
-                                <button onClick={() => toggleAdminChat(u.code)} className="rounded bg-black px-3 py-1 text-sm text-white">
+                                <button
+                                  onClick={() => toggleAdminChat(u.code)}
+                                  className="rounded bg-black px-3 py-1 text-sm text-white"
+                                >
                                   Hide Chat
                                 </button>
                               </div>
@@ -1231,17 +1474,27 @@ async function activateElvy(code: string) {
                                   </div>
                                 ) : (
                                   <>
-                                    {(u.privateUserMessages || []).map((m, i) => (
-                                      <div key={`private-user-${u.code}-${i}`} className="mb-3 rounded-xl bg-white p-3 shadow">
-                                        User: {m}
-                                      </div>
-                                    ))}
+                                    {(u.privateUserMessages || []).map(
+                                      (m, i) => (
+                                        <div
+                                          key={`private-user-${u.code}-${i}`}
+                                          className="mb-3 rounded-xl bg-white p-3 shadow"
+                                        >
+                                          User: {m}
+                                        </div>
+                                      ),
+                                    )}
 
-                                    {(u.privateAdminMessages || []).map((m, i) => (
-                                      <div key={`private-admin-${u.code}-${i}`} className="mb-3 whitespace-pre-line rounded-xl bg-[#7a3b1d] p-3 text-white">
-                                        Happy Office: {m}
-                                      </div>
-                                    ))}
+                                    {(u.privateAdminMessages || []).map(
+                                      (m, i) => (
+                                        <div
+                                          key={`private-admin-${u.code}-${i}`}
+                                          className="mb-3 whitespace-pre-line rounded-xl bg-[#7a3b1d] p-3 text-white"
+                                        >
+                                          Happy Office: {m}
+                                        </div>
+                                      ),
+                                    )}
                                   </>
                                 )}
                               </div>
@@ -1258,7 +1511,10 @@ async function activateElvy(code: string) {
                                 className="mt-4 h-24 w-full rounded-xl border px-4 py-3"
                               />
 
-                              <button onClick={() => sendAdminReply(u.code)} className="mt-3 rounded-xl bg-[#7a3b1d] px-6 py-3 font-bold text-white">
+                              <button
+                                onClick={() => sendAdminReply(u.code)}
+                                className="mt-3 rounded-xl bg-[#7a3b1d] px-6 py-3 font-bold text-white"
+                              >
                                 Send Reply
                               </button>
                             </div>
@@ -1270,7 +1526,7 @@ async function activateElvy(code: string) {
 
                   {users.length === 0 && (
                     <tr>
-                      <td colSpan={10} className="p-6 text-center">
+                      <td colSpan={11} className="p-6 text-center">
                         No user requests yet.
                       </td>
                     </tr>
@@ -1279,7 +1535,9 @@ async function activateElvy(code: string) {
               </table>
             </div>
 
-            <p className="mt-4 text-lg font-semibold">AI Replies Used: {totalReplies}</p>
+            <p className="mt-4 text-lg font-semibold">
+              Total Ticket Time Used: {formatTicketTime(totalTimeUsed)}
+            </p>
           </div>
         </section>
       )}

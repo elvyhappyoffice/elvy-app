@@ -39,3 +39,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+.elvy/
+README-old.md
+app/mobile/spotlight1/
+app/data/students.json
+data/students.json

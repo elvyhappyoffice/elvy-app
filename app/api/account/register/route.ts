@@ -86,6 +86,7 @@ function mapAccountToClient(account: any) {
     displayName: account.displayName || account.display_name || account.username,
     userCode: account.userCode || account.user_code,
     creditsLeft: Number(account.creditsLeft ?? account.credits_left ?? 0),
+    secondsRemaining: Number(account.secondsRemaining ?? account.seconds_remaining ?? 0),
     ticketStatus: account.ticketStatus || account.ticket_status || "Free",
   };
 }
@@ -104,6 +105,7 @@ async function createSupabaseAccount(
       display_name: displayName,
       user_code: userCode,
       credits_left: 3,
+      seconds_remaining: 54000,
       ticket_status: "Free",
       last_messages: [],
       created_at: new Date().toISOString(),
@@ -172,6 +174,7 @@ async function createSupabaseAccount(
       displayName,
       userCode,
       creditsLeft: 3,
+      secondsRemaining: 54000,
       ticketStatus: "Free",
     },
   };
@@ -252,6 +255,7 @@ export async function POST(req: NextRequest) {
     displayName,
     userCode,
     creditsLeft: 3,
+    secondsRemaining: 54000,
     ticketStatus: "Free",
     lastMessages: [],
     createdAt: new Date().toISOString(),
@@ -275,6 +279,7 @@ export async function POST(req: NextRequest) {
     repliesLimit: 3,
     repliesUsed: 0,
     repliesLeft: 3,
+    secondsRemaining: 54000,
     activated: true,
     adminMessages: [],
     userMessages: [],

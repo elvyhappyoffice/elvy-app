@@ -23,23 +23,40 @@ function saveUsers(users: any[]) {
 }
 
 function mapSupabaseUser(user: any) {
+  const ticketHours = Number(user.ticket_hours ?? 0);
+  const secondsRemaining = Number(user.seconds_remaining ?? 0);
+  const secondsUsed = Number(user.seconds_used ?? 0);
+
   return {
     code: user.code || "",
     name: user.name || "",
-    ageGroup: "18–30",
-    helpType: "General support",
+    ageGroup: user.age_group || "18–30",
+    helpType: user.help_type || "General support",
     contactMethod: user.contact_method || "Telegram",
     contactValue: user.contact_value || "",
     status: user.status || "Pending",
+
+    // Old reply fields kept for safe backwards compatibility.
     repliesLimit: Number(user.replies_limit || 0),
     repliesUsed: Number(user.replies_used || 0),
-    aiCost: 0,
-    contactCost: 0,
-    startDate: "",
-    endDate: "",
+
+    // New time-ticket fields for public users.
+    ticketType: user.ticket_type || "Starter",
+    ticketHours,
+    secondsRemaining,
+    secondsUsed,
+
+    aiCost: Number(user.ai_cost || 0),
+    contactCost: Number(user.contact_cost || 0),
+    startDate: user.start_date || "",
+    endDate: user.end_date || "",
     telegramChatId: user.telegram_chat_id || "",
     adminMessages: user.admin_messages || [],
     userMessages: user.user_messages || [],
+    privateAdminMessages: user.private_admin_messages || [],
+    privateUserMessages: user.private_user_messages || [],
+    setupAccessNumber: user.setup_access_number || "",
+    needsAdminReply: Boolean(user.needs_admin_reply),
     memory: user.memory || {},
     paymentNoticeSent: Boolean(user.payment_notice_sent),
     paid: Boolean(user.paid),
@@ -54,14 +71,33 @@ function mapUserToSupabase(user: any) {
   return {
     code: user.code || "",
     name: user.name || "",
+    age_group: user.ageGroup || "18–30",
+    help_type: user.helpType || "General support",
     contact_method: user.contactMethod || "Telegram",
     contact_value: user.contactValue || "",
     status: user.status || "Pending",
+
+    // Old reply fields kept for safe backwards compatibility.
     replies_limit: Number(user.repliesLimit || 0),
     replies_used: Number(user.repliesUsed || 0),
+
+    // New time-ticket fields for public users.
+    ticket_type: user.ticketType || "Starter",
+    ticket_hours: Number(user.ticketHours || 0),
+    seconds_remaining: Number(user.secondsRemaining || 0),
+    seconds_used: Number(user.secondsUsed || 0),
+
+    ai_cost: Number(user.aiCost || 0),
+    contact_cost: Number(user.contactCost || 0),
+    start_date: user.startDate || "",
+    end_date: user.endDate || "",
     telegram_chat_id: user.telegramChatId || "",
     admin_messages: user.adminMessages || [],
     user_messages: user.userMessages || [],
+    private_admin_messages: user.privateAdminMessages || [],
+    private_user_messages: user.privateUserMessages || [],
+    setup_access_number: user.setupAccessNumber || "",
+    needs_admin_reply: Boolean(user.needsAdminReply),
     memory: user.memory || {},
     payment_notice_sent: Boolean(user.paymentNoticeSent),
     paid: Boolean(user.paid),

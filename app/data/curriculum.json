@@ -1,0 +1,40 @@
+{
+  "levels": [
+    {
+      "id": "level-a",
+      "title": "LEVEL A",
+      "sublevels": [
+        {
+          "id": "a1",
+          "title": "A1",
+          "units": [
+            {
+              "id": "unit-hello",
+              "title": "Hello",
+              "lessons": [
+                {
+                  "id": "lesson-1",
+                  "title": "Greetings"
+                },
+                {
+                  "id": "lesson-2",
+                  "title": "Asking Names"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "level-b",
+      "title": "LEVEL B",
+      "sublevels": []
+    },
+    {
+      "id": "level-c",
+      "title": "LEVEL C",
+      "sublevels": []
+    }
+  ]
+}

@@ -1,14 +1,10 @@
-import OpenAI from "openai";
 import { NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
 import { supabase } from "@/lib/supabase";
+import { AI } from "@/lib/openai";
 
 export const runtime = "nodejs";
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
 
 const DATA_FILE = path.join(process.cwd(), "data", "dailySupportUsers.json");
 const ACCOUNTS_FILE = path.join(process.cwd(), "data", "elvyAccounts.json");
@@ -939,17 +935,16 @@ export async function POST(req: Request) {
       },
     ];
 
-    const response = await openai.responses.create({
-      model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
+    const aiResponse = await AI.chat({
       instructions: isStudentMode
         ? getElvyLanguageCenterPrompt(studentProfile)
         : getElvySystemPrompt(activeUser?.name || "friend"),
       input: conversationInput,
-      max_output_tokens: MAX_OUTPUT_TOKENS,
+      maxOutputTokens: MAX_OUTPUT_TOKENS,
     });
 
     const reply =
-      response.output_text?.trim() ||
+      aiResponse.text ||
       "I am sorry. I cannot reply right now.";
 
     const secondsUsed = calculateInteractionSeconds(userMessage, reply);
@@ -1038,7 +1033,7 @@ export async function POST(req: Request) {
     return NextResponse.json({
       success: true,
       reply,
-      usage: response.usage || null,
+      usage: aiResponse.usage || null,
       repliesLeft,
       secondsUsed,
       secondsRemaining,
