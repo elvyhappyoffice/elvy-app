@@ -10,7 +10,6 @@
   },
   "dependencies": {
     "@napi-rs/canvas": "^1.0.2",
-    "@napi-rs/canvas-win32-x64-msvc": "^1.0.2",
     "@supabase/supabase-js": "^2.105.4",
     "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",
