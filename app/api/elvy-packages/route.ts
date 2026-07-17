@@ -85,12 +85,13 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    const packages = await ElvyPackageRepository.listPackages();
+    const dashboardPackages =
+      await ElvyPackageRepository.listDashboardPackages();
 
     return NextResponse.json({
       success: true,
-      packages,
-      count: packages.length,
+      packages: dashboardPackages,
+      count: dashboardPackages.length,
     });
   } catch (error) {
     console.error("[GET /api/elvy-packages] Failed:", error);

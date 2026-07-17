@@ -120,6 +120,27 @@ export type ElvyPackageListItem = {
   } | null;
 };
 
+
+export type ElvyDashboardPackage = {
+  packageId: string;
+  syllabusId: string;
+  title: string;
+  packageVersion: string;
+  importedAt: string;
+  level: CloudLevel;
+  treeRecord: {
+    syllabusId: string;
+    title: string;
+    levelId: string;
+    levelTitle: string;
+    sublevelIds: string[];
+    units: number;
+    lessons: number;
+    generatedAt: string;
+    status: "Approved";
+  };
+};
+
 export type ElvyPackageDetails = {
   package: Record<string, unknown>;
   levels: Array<Record<string, unknown>>;
@@ -601,6 +622,158 @@ async function saveHierarchy(
   }
 }
 
+
+function numberValue(value: unknown, fallback = 0): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function buildDashboardLevel(details: ElvyPackageDetails): CloudLevel | null {
+  const levelRows = details.levels as any[];
+  const sublevelRows = details.sublevels as any[];
+  const unitRows = details.units as any[];
+  const lessonRows = details.lessons as any[];
+  const teacherPlanRows = details.teacherPlans as any[];
+  const recordBookRows = details.recordBookEntries as any[];
+  const blueprintRows = details.elvyBlueprints as any[];
+  const assetRows = details.teachingAssets as any[];
+
+  const levelRow = [...levelRows].sort(
+    (a, b) => numberValue(a.display_order, 1) - numberValue(b.display_order, 1),
+  )[0];
+
+  if (!levelRow) return null;
+
+  const levelUuid = String(levelRow.id);
+  const levelExternalId = String(levelRow.external_id || levelUuid);
+
+  const levelSublevels = sublevelRows
+    .filter((row) => String(row.level_id) === levelUuid)
+    .sort(
+      (a, b) =>
+        numberValue(a.display_order, 1) - numberValue(b.display_order, 1),
+    )
+    .map((sublevelRow) => {
+      const sublevelUuid = String(sublevelRow.id);
+      const sublevelExternalId = String(
+        sublevelRow.external_id || sublevelUuid,
+      );
+
+      const sublevelUnits = unitRows
+        .filter((row) => String(row.sublevel_id) === sublevelUuid)
+        .sort(
+          (a, b) =>
+            numberValue(a.display_order, 1) -
+            numberValue(b.display_order, 1),
+        )
+        .map((unitRow) => {
+          const unitUuid = String(unitRow.id);
+          const unitExternalId = String(unitRow.external_id || unitUuid);
+
+          const unitLessons = lessonRows
+            .filter((row) => String(row.unit_id) === unitUuid)
+            .sort(
+              (a, b) =>
+                numberValue(a.display_order, 1) -
+                numberValue(b.display_order, 1),
+            )
+            .map((lessonRow) => {
+              const lessonUuid = String(lessonRow.id);
+              const lessonExternalId = String(
+                lessonRow.external_id || lessonUuid,
+              );
+              const teacherPlan = teacherPlanRows.find(
+                (row) => String(row.lesson_id) === lessonUuid,
+              );
+              const recordBook = recordBookRows.find(
+                (row) => String(row.lesson_id) === lessonUuid,
+              );
+              const blueprint = blueprintRows.find(
+                (row) => String(row.lesson_id) === lessonUuid,
+              );
+              const teachingAssets = assetRows
+                .filter((row) => String(row.lesson_id) === lessonUuid)
+                .sort(
+                  (a, b) =>
+                    numberValue(a.display_order, 1) -
+                    numberValue(b.display_order, 1),
+                )
+                .map((assetRow) => ({
+                  id: String(assetRow.external_id || assetRow.id),
+                  type: assetRow.asset_type || undefined,
+                  title: assetRow.title || undefined,
+                  description: assetRow.description || undefined,
+                  file: assetRow.file_name || undefined,
+                  mimeType: assetRow.mime_type || undefined,
+                  lessonStage: assetRow.lesson_stage || undefined,
+                  pedagogicalRole: assetRow.pedagogical_role || undefined,
+                  learningObjective: assetRow.learning_objective || undefined,
+                  tags: Array.isArray(assetRow.tags) ? assetRow.tags : [],
+                  visibleText: Array.isArray(assetRow.visible_text)
+                    ? assetRow.visible_text
+                    : [],
+                  metadata: objectValue(assetRow.asset_metadata),
+                }));
+
+              return {
+                id: lessonExternalId,
+                title: String(
+                  lessonRow.display_title ||
+                    lessonRow.title ||
+                    lessonExternalId,
+                ),
+                label: lessonRow.label || undefined,
+                lessonNumber: lessonRow.lesson_number || undefined,
+                pageRange: lessonRow.page_range || undefined,
+                duration: lessonRow.duration_label || undefined,
+                order: numberValue(lessonRow.display_order, 1),
+                theme: lessonRow.theme || undefined,
+                cefrLevel: lessonRow.cefr_level || undefined,
+                schoolGrade: lessonRow.school_grade || undefined,
+                lessonPlanData: objectValue(teacherPlan?.plan_data),
+                recordBookData: objectValue(recordBook?.entry_data),
+                blueprintData: objectValue(blueprint?.blueprint_data),
+                teachingAssets,
+              } satisfies CloudLesson;
+            });
+
+          return {
+            id: unitExternalId,
+            title: String(unitRow.display_title || unitRow.title || unitExternalId),
+            label: unitRow.label || undefined,
+            order: numberValue(unitRow.display_order, 1),
+            pageRange: unitRow.page_range || undefined,
+            mission: unitRow.mission || undefined,
+            objectives: Array.isArray(unitRow.objectives)
+              ? unitRow.objectives
+              : [],
+            competencies: Array.isArray(unitRow.competencies)
+              ? unitRow.competencies
+              : [],
+            lessons: unitLessons,
+          } satisfies CloudUnit;
+        });
+
+      return {
+        id: sublevelExternalId,
+        title: String(sublevelRow.title || sublevelExternalId),
+        code: sublevelRow.code || undefined,
+        label: sublevelRow.label || undefined,
+        order: numberValue(sublevelRow.display_order, 1),
+        units: sublevelUnits,
+      } satisfies CloudSublevel;
+    });
+
+  return {
+    id: levelExternalId,
+    title: String(levelRow.title || levelExternalId),
+    code: levelRow.code || undefined,
+    label: levelRow.label || undefined,
+    order: numberValue(levelRow.display_order, 1),
+    sublevels: levelSublevels,
+  };
+}
+
 export const ElvyPackageRepository = {
   async savePackage(
     input: SaveElvyPackageInput,
@@ -844,6 +1017,63 @@ export const ElvyPackageRepository = {
       teachingAssets: teachingAssets as Array<Record<string, unknown>>,
       lessonCompletion: lessonCompletion as Array<Record<string, unknown>>,
     };
+  },
+
+
+  async listDashboardPackages(): Promise<ElvyDashboardPackage[]> {
+    const packageList = await this.listPackages();
+
+    const dashboardPackages = await Promise.all(
+      packageList.map(async (item) => {
+        const details = await this.getPackage(item.packageId);
+        if (!details) return null;
+
+        const level = buildDashboardLevel(details);
+        if (!level) return null;
+
+        const packageRow = details.package as Record<string, unknown>;
+        const metadata = objectValue(packageRow.package_metadata);
+        const syllabusId =
+          stringValue(metadata.syllabusId) || item.packageId;
+        const unitCount = level.sublevels.reduce(
+          (total, sublevel) => total + sublevel.units.length,
+          0,
+        );
+        const lessonCount = level.sublevels.reduce(
+          (total, sublevel) =>
+            total +
+            sublevel.units.reduce(
+              (unitTotal, unit) => unitTotal + unit.lessons.length,
+              0,
+            ),
+          0,
+        );
+
+        return {
+          packageId: item.packageId,
+          syllabusId,
+          title: item.title,
+          packageVersion: item.packageVersion,
+          importedAt: item.importedAt,
+          level,
+          treeRecord: {
+            syllabusId,
+            title: item.title,
+            levelId: level.id,
+            levelTitle: level.title,
+            sublevelIds: level.sublevels.map((sublevel) => sublevel.id),
+            units: unitCount,
+            lessons: lessonCount,
+            generatedAt: item.importedAt,
+            status: "Approved",
+          },
+        } satisfies ElvyDashboardPackage;
+      }),
+    );
+
+    return dashboardPackages.filter(
+      (item): item is ElvyDashboardPackage => Boolean(item),
+    );
   },
 
   async deletePackage(packageId: string): Promise<boolean> {

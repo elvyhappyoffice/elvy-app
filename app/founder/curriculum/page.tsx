@@ -62,7 +62,6 @@ type PendingReadyPackage = {
 };
 
 const ACTIVE_LESSON_STUDIO_SYLLABUS_KEY = "elvy-active-lesson-studio-syllabus";
-const CURRICULUM_TREE_STORAGE_KEY = "elvy-curriculum-reader-trees-v1";
 
 const starterLevels: Level[] = [
   { id: "level-a", title: "LEVEL A", sublevels: [] },
@@ -85,7 +84,6 @@ export default function CurriculumDashboard() {
   const [pendingReadyPackage, setPendingReadyPackage] =
     useState<PendingReadyPackage | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [hasLoadedTrees, setHasLoadedTrees] = useState(false);
   const [isImportingReadyPackage, setIsImportingReadyPackage] = useState(false);
   const [isConfirmingReadyPackage, setIsConfirmingReadyPackage] = useState(false);
   const [saveStatus, setSaveStatus] = useState("Loading curriculum...");
@@ -94,61 +92,71 @@ export default function CurriculumDashboard() {
   );
 
   useEffect(() => {
-    async function loadCurriculum() {
+    async function loadDashboard() {
       try {
-        const response = await fetch("/api/curriculum", {
-          cache: "no-store",
-        });
-        const data = await response.json();
+        const [curriculumResponse, packagesResponse] = await Promise.all([
+          fetch("/api/curriculum", { cache: "no-store" }),
+          fetch("/api/elvy-packages", { cache: "no-store" }),
+        ]);
 
-        if (data?.success && Array.isArray(data?.curriculum?.levels)) {
-          setLevels(data.curriculum.levels as Level[]);
-          setSaveStatus("Curriculum loaded.");
-        } else {
-          setSaveStatus("Using starter curriculum.");
+        const curriculumData = await curriculumResponse.json();
+        const packagesData = await packagesResponse.json();
+
+        const cloudPackages = Array.isArray(packagesData?.packages)
+          ? packagesData.packages
+          : [];
+
+        const cloudLevels = cloudPackages
+          .map((item: { level?: Level }) => item.level)
+          .filter((item: Level | undefined): item is Level => Boolean(item));
+
+        const cloudTreeRecords = cloudPackages
+          .map(
+            (item: { treeRecord?: CurriculumTreeRecord }) =>
+              item.treeRecord,
+          )
+          .filter(
+            (
+              item: CurriculumTreeRecord | undefined,
+            ): item is CurriculumTreeRecord => Boolean(item),
+          );
+
+        if (cloudLevels.length) {
+          setLevels(cloudLevels);
+        } else if (
+          curriculumData?.success &&
+          Array.isArray(curriculumData?.curriculum?.levels)
+        ) {
+          setLevels(curriculumData.curriculum.levels as Level[]);
         }
+
+        setCurriculumTreeRecords(cloudTreeRecords);
+
+        if (!packagesResponse.ok || !packagesData?.success) {
+          throw new Error(
+            packagesData?.error ||
+              "Cloud packages could not be loaded.",
+          );
+        }
+
+        setSaveStatus(
+          cloudTreeRecords.length
+            ? `Loaded ${cloudTreeRecords.length} curriculum package${
+                cloudTreeRecords.length === 1 ? "" : "s"
+              } from Elvy Cloud.`
+            : "No cloud curriculum packages yet.",
+        );
       } catch (error) {
-        console.error("Curriculum load failed:", error);
-        setSaveStatus("Could not load saved curriculum.");
+        console.error("Dashboard load failed:", error);
+        setSaveStatus("Could not load Elvy Cloud curriculum.");
       } finally {
         hasLoadedCurriculumRef.current = true;
         setIsLoading(false);
       }
     }
 
-    loadCurriculum();
+    loadDashboard();
   }, []);
-
-  useEffect(() => {
-    try {
-      const savedTrees = window.localStorage.getItem(
-        CURRICULUM_TREE_STORAGE_KEY,
-      );
-      if (savedTrees) {
-        const parsed = JSON.parse(savedTrees) as CurriculumTreeRecord[];
-        if (Array.isArray(parsed)) {
-          setCurriculumTreeRecords(parsed);
-        }
-      }
-    } catch (error) {
-      console.error("GSRP dashboard state load failed:", error);
-    } finally {
-      setHasLoadedTrees(true);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!hasLoadedTrees) return;
-
-    try {
-      window.localStorage.setItem(
-        CURRICULUM_TREE_STORAGE_KEY,
-        JSON.stringify(curriculumTreeRecords),
-      );
-    } catch (error) {
-      console.error("Curriculum tree save failed:", error);
-    }
-  }, [curriculumTreeRecords, hasLoadedTrees]);
 
   useEffect(() => {
     if (!hasLoadedCurriculumRef.current) return;
@@ -293,12 +301,43 @@ export default function CurriculumDashboard() {
         ...previousLevels.filter((item) => item.id !== level.id),
       ]);
 
-      setCurriculumTreeRecords((previousRecords) => [
-        treeRecord,
-        ...previousRecords.filter(
-          (record) => record.syllabusId !== treeRecord.syllabusId,
-        ),
-      ]);
+      const refreshedResponse = await fetch("/api/elvy-packages", {
+        cache: "no-store",
+      });
+      const refreshedData = await refreshedResponse.json();
+
+      if (refreshedResponse.ok && refreshedData?.success) {
+        const refreshedPackages = Array.isArray(refreshedData.packages)
+          ? refreshedData.packages
+          : [];
+
+        setLevels(
+          refreshedPackages
+            .map((item: { level?: Level }) => item.level)
+            .filter(
+              (item: Level | undefined): item is Level => Boolean(item),
+            ),
+        );
+        setCurriculumTreeRecords(
+          refreshedPackages
+            .map(
+              (item: { treeRecord?: CurriculumTreeRecord }) =>
+                item.treeRecord,
+            )
+            .filter(
+              (
+                item: CurriculumTreeRecord | undefined,
+              ): item is CurriculumTreeRecord => Boolean(item),
+            ),
+        );
+      } else {
+        setCurriculumTreeRecords((previousRecords) => [
+          treeRecord,
+          ...previousRecords.filter(
+            (record) => record.syllabusId !== treeRecord.syllabusId,
+          ),
+        ]);
+      }
 
       window.localStorage.setItem(
         ACTIVE_LESSON_STUDIO_SYLLABUS_KEY,
