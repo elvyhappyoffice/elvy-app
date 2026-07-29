@@ -418,11 +418,223 @@ const starterPlan: LessonPlan = {
   readyForElvy: "No",
 };
 
+
+type CloudLessonContext = {
+  packageId?: string;
+  syllabusId?: string;
+  packageTitle?: string;
+  level?: { id?: string; title?: string };
+  sublevel?: { id?: string; title?: string };
+  unit?: { id?: string; title?: string };
+  lesson?: {
+    id?: string;
+    title?: string;
+    lessonNumber?: string;
+    pageRange?: string;
+    duration?: string;
+    theme?: string;
+    cefrLevel?: string;
+    schoolGrade?: string;
+    lessonPlanData?: Record<string, unknown>;
+    blueprintData?: Record<string, unknown>;
+    elvyBlueprint?: unknown[];
+    teachingAssets?: unknown[];
+  };
+};
+
+function stringValue(value: unknown, fallback = ""): string {
+  return typeof value === "string" ? value : fallback;
+}
+
+function stringArrayValue(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function normalizeIntegratedSkills(value: unknown): IntegratedSkillRow[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .filter((item): item is Record<string, unknown> =>
+      Boolean(item) && typeof item === "object",
+    )
+    .map((item) => ({
+      skill: stringValue(item.skill),
+      objective: stringValue(item.objective),
+      textbookActivities: stringValue(item.textbookActivities),
+      elvyStrategy: stringValue(item.elvyStrategy),
+    }));
+}
+
+function normalizeStages(value: unknown): LessonPlanStage[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .filter((item): item is Record<string, unknown> =>
+      Boolean(item) && typeof item === "object",
+    )
+    .map((item) => ({
+      stage: stringValue(item.stage),
+      time: stringValue(item.time),
+      teacherActivities: stringValue(item.teacherActivities),
+      studentActivities: stringValue(item.studentActivities),
+      interaction: stringValue(item.interaction),
+      resources: stringValue(item.resources),
+      assessment: stringValue(item.assessment),
+    }));
+}
+
+function normalizeBlueprint(value: unknown): ElvyBlueprintStage[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .filter((item): item is Record<string, unknown> =>
+      Boolean(item) && typeof item === "object",
+    )
+    .map((item) => ({
+      stage: stringValue(item.stage),
+      duration: stringValue(item.duration),
+      teachingObjective: stringValue(item.teachingObjective),
+      whiteboardPlan: Array.isArray(item.whiteboardPlan)
+        ? stringArrayValue(item.whiteboardPlan)
+        : stringValue(item.whiteboardPlan),
+      elvyScript: stringValue(item.elvyScript),
+      learnerTaskSequence: stringArrayValue(item.learnerTaskSequence),
+      expectedResponses: stringArrayValue(item.expectedResponses),
+      evaluationCriteria: stringValue(item.evaluationCriteria),
+      feedbackStrategy: stringValue(item.feedbackStrategy),
+      supportLadder: stringArrayValue(item.supportLadder),
+      successCriteria: stringArrayValue(item.successCriteria),
+      retryLimit:
+        typeof item.retryLimit === "number" ? item.retryLimit : 0,
+      successAction: stringValue(item.successAction),
+      recoveryAction: stringValue(item.recoveryAction),
+      transition: stringValue(item.transition),
+      instructions: stringValue(item.instructions) || undefined,
+    }));
+}
+
+function normalizeCloudLessonPlan(
+  context: CloudLessonContext,
+): LessonPlan {
+  const lesson = context.lesson || {};
+  const raw =
+    lesson.lessonPlanData &&
+    typeof lesson.lessonPlanData === "object"
+      ? lesson.lessonPlanData
+      : {};
+
+  const blueprintFromPlan = normalizeBlueprint(raw.elvyBlueprint);
+  const blueprintFromCloud = normalizeBlueprint(lesson.elvyBlueprint);
+  const blueprintFromData = normalizeBlueprint(
+    lesson.blueprintData &&
+    typeof lesson.blueprintData === "object"
+      ? lesson.blueprintData.stages
+      : [],
+  );
+
+  return {
+    status:
+      raw.status === "Draft" ||
+      raw.status === "Generated" ||
+      raw.status === "Reviewed" ||
+      raw.status === "Approved" ||
+      raw.status === "Ready for Elvy"
+        ? raw.status
+        : "Generated",
+    level: stringValue(raw.level, context.level?.title || ""),
+    sublevel: stringValue(raw.sublevel, context.sublevel?.title || ""),
+    unit: stringValue(raw.unit, context.unit?.title || ""),
+    lessonNumber: stringValue(
+      raw.lessonNumber,
+      lesson.lessonNumber || "",
+    ),
+    lessonTitle: stringValue(
+      raw.lessonTitle,
+      lesson.title || "",
+    ),
+    textbook: stringValue(raw.textbook, context.packageTitle || ""),
+    pages: stringValue(raw.pages, lesson.pageRange || ""),
+    duration: stringValue(raw.duration, lesson.duration || ""),
+    theme: stringValue(raw.theme, lesson.theme || ""),
+    cefrLevel: stringValue(raw.cefrLevel, lesson.cefrLevel || ""),
+    schoolGrade: stringValue(
+      raw.schoolGrade,
+      lesson.schoolGrade || "",
+    ),
+
+    unitObjectives: stringValue(raw.unitObjectives),
+    lessonObjectives: stringValue(raw.lessonObjectives),
+    communicativeObjective: stringValue(raw.communicativeObjective),
+    languageObjective: stringValue(raw.languageObjective),
+    successCriteria: stringValue(raw.successCriteria),
+    competencies: stringValue(raw.competencies),
+    prerequisites: stringValue(raw.prerequisites),
+    outcomes: stringValue(raw.outcomes),
+
+    vocabulary: stringValue(raw.vocabulary),
+    grammar: stringValue(raw.grammar),
+    functions: stringValue(raw.functions),
+    pronunciation: stringValue(raw.pronunciation),
+    usefulExpressions: stringValue(raw.usefulExpressions),
+    sentencePatterns: stringValue(raw.sentencePatterns),
+
+    integratedSkills: normalizeIntegratedSkills(raw.integratedSkills),
+
+    teachingApproach: stringValue(raw.teachingApproach),
+    pedagogicalFramework: stringValue(raw.pedagogicalFramework),
+    udlStrategies: stringValue(raw.udlStrategies),
+    differentiation: stringValue(raw.differentiation),
+    assessmentForLearning: stringValue(raw.assessmentForLearning),
+
+    stages: normalizeStages(raw.stages),
+
+    diagnosticAssessment: stringValue(raw.diagnosticAssessment),
+    formativeAssessment: stringValue(raw.formativeAssessment),
+    summativeAssessment: stringValue(raw.summativeAssessment),
+    selfAssessment: stringValue(raw.selfAssessment),
+    peerAssessment: stringValue(raw.peerAssessment),
+
+    teacherTips: stringValue(raw.teacherTips),
+    grouping: stringValue(raw.grouping),
+    timeManagement: stringValue(raw.timeManagement),
+    transitions: stringValue(raw.transitions),
+    commonDifficulties: stringValue(raw.commonDifficulties),
+    suggestedSolutions: stringValue(raw.suggestedSolutions),
+
+    resources: stringValue(raw.resources),
+    homework: stringValue(raw.homework),
+    fastFinishers: stringValue(raw.fastFinishers),
+    extraPractice: stringValue(raw.extraPractice),
+    parentSuggestions: stringValue(raw.parentSuggestions),
+    teacherNotes: stringValue(raw.teacherNotes),
+
+    elvyBlueprint:
+      blueprintFromPlan.length > 0
+        ? blueprintFromPlan
+        : blueprintFromCloud.length > 0
+          ? blueprintFromCloud
+          : blueprintFromData,
+
+    generatedBy: stringValue(raw.generatedBy, "Elvy GSRP"),
+    generationDate: stringValue(raw.generationDate),
+    sourceBook: stringValue(
+      raw.sourceBook,
+      context.packageTitle || "",
+    ),
+    confidenceScore: stringValue(raw.confidenceScore),
+    teacherApproved: stringValue(raw.teacherApproved, "No"),
+    readyForElvy: stringValue(raw.readyForElvy, "No"),
+  };
+}
+
 function LessonPlanPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const queryLessonId = searchParams.get("lessonId");
   const querySyllabusId = searchParams.get("syllabusId");
+  const queryPackageId = searchParams.get("packageId");
   const pathParts = typeof window !== "undefined"
     ? window.location.pathname.split("/").filter(Boolean)
     : [];
@@ -433,7 +645,7 @@ function LessonPlanPageContent() {
   );
   const [activeSyllabusTitle, setActiveSyllabusTitle] = useState("");
   const [plan, setPlan] = useState<LessonPlan>(starterPlan);
-  const [saveStatus, setSaveStatus] = useState("Draft lesson plan");
+  const [saveStatus, setSaveStatus] = useState("Loading lesson from Elvy Cloud...");
   const [openSection, setOpenSection] = useState("lesson-information");
   const [previewMode, setPreviewMode] = useState<"" | "teacher" | "record" | "elvy">("");
   const [curriculumUnits, setCurriculumUnits] = useState<CurriculumNavigatorUnit[]>([]);
@@ -468,24 +680,93 @@ function LessonPlanPageContent() {
   }, [querySyllabusId]);
 
   useEffect(() => {
-    setOpenSection("lesson-information");
-    setPreviewMode("");
+    let cancelled = false;
 
-    try {
-      const storedPlan = window.localStorage.getItem(`elvy-lesson-plan-${lessonId}`);
-      if (storedPlan) {
-        const parsedPlan = JSON.parse(storedPlan) as LessonPlan;
-        setPlan(parsedPlan);
-        setSaveStatus("Loaded from Curriculum Reader");
-      } else if (lessonId !== "starter-lesson") {
+    async function loadLessonFromCloud() {
+      setOpenSection("lesson-information");
+      setPreviewMode("");
+
+      if (!lessonId || lessonId === "starter-lesson") {
         setPlan(starterPlan);
-        setSaveStatus("New lesson plan container");
+        setSaveStatus("Starter lesson plan");
+        return;
       }
-    } catch (error) {
-      console.error("Could not load lesson plan:", error);
-      setSaveStatus("Could not load saved lesson plan");
+
+      const resolvedSyllabusId =
+        querySyllabusId ||
+        activeSyllabusId ||
+        window.localStorage.getItem(ACTIVE_STUDIO_SYLLABUS_KEY) ||
+        "";
+
+      if (!resolvedSyllabusId && !queryPackageId) {
+        setSaveStatus("No active cloud curriculum selected.");
+        return;
+      }
+
+      try {
+        setSaveStatus("Loading lesson from Elvy Cloud...");
+
+        const params = new URLSearchParams();
+        if (queryPackageId) {
+          params.set("packageId", queryPackageId);
+        } else {
+          params.set("syllabusId", resolvedSyllabusId);
+        }
+        params.set("lessonId", lessonId);
+
+        const response = await fetch(
+          `/api/elvy-packages?${params.toString()}`,
+          { cache: "no-store" },
+        );
+        const data = await response.json();
+
+        if (!response.ok || !data?.success || !data?.lessonContext) {
+          throw new Error(
+            data?.error ||
+              "The lesson could not be loaded from Elvy Cloud.",
+          );
+        }
+
+        if (cancelled) return;
+
+        const context = data.lessonContext as CloudLessonContext;
+        const cloudPlan = normalizeCloudLessonPlan(context);
+
+        setPlan(cloudPlan);
+        setActiveSyllabusTitle(context.packageTitle || "");
+
+        if (context.syllabusId) {
+          setActiveSyllabusId(context.syllabusId);
+          window.localStorage.setItem(
+            ACTIVE_STUDIO_SYLLABUS_KEY,
+            context.syllabusId,
+          );
+        }
+
+        setSaveStatus("Loaded from Elvy Cloud");
+      } catch (error) {
+        console.error("Could not load cloud lesson plan:", error);
+        if (!cancelled) {
+          setSaveStatus(
+            error instanceof Error
+              ? error.message
+              : "Could not load the cloud lesson plan.",
+          );
+        }
+      }
     }
-  }, [lessonId]);
+
+    void loadLessonFromCloud();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeSyllabusId,
+    lessonId,
+    queryPackageId,
+    querySyllabusId,
+  ]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -793,15 +1074,6 @@ function LessonPlanPageContent() {
 
   function openLessonFromNavigator(nextLessonId: string) {
     if (!nextLessonId || nextLessonId === lessonId) return;
-
-    try {
-      window.localStorage.setItem(
-        `elvy-lesson-plan-${lessonId}`,
-        JSON.stringify(plan),
-      );
-    } catch (error) {
-      console.error("Could not save the current lesson before navigation:", error);
-    }
 
     const nextUnit = curriculumUnits.find((unit) =>
       unit.lessons.some((lesson) => lesson.id === nextLessonId),
