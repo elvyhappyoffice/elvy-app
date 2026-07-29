@@ -160,14 +160,14 @@ export function validateReadyPackage(
     }
   }
 
-  for (const blueprint of blueprints) {
-    if (!lessonIds.has(blueprint.lessonId)) {
-      errors.push({
-        code: "ORPHAN_ELVY_BLUEPRINT",
-        message: `Elvy blueprint "${blueprint.id}" references unknown lesson "${blueprint.lessonId}".`,
-      });
-    }
+for (const blueprint of blueprints) {
+  if (!lessonIds.has(blueprint.lessonId)) {
+    errors.push({
+      code: "ORPHAN_ELVY_BLUEPRINT",
+      message: `Elvy blueprint "${blueprint.id}" references unknown lesson "${blueprint.lessonId}".`,
+    });
   }
+}
 
   for (const asset of assets) {
     if (!lessonIds.has(asset.lessonId)) {

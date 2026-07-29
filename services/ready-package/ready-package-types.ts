@@ -1,11 +1,18 @@
 export const READY_PACKAGE_SCHEMA_VERSION = 1;
 
 export type ReadyPackageAssetType =
+  | "textbook-image"
+  | "textbook-page"
   | "image"
   | "flashcard"
   | "grammar-chart"
   | "speaking-prompt"
+  | "reading-text"
+  | "dialogue"
   | "worksheet"
+  | "exercise"
+  | "assessment"
+  | "whiteboard-slide"
   | "audio"
   | "video"
   | "document"
@@ -13,15 +20,62 @@ export type ReadyPackageAssetType =
 
 export type ReadyPackageAsset = {
   id: string;
+
   lessonId: string;
+
   type: ReadyPackageAssetType;
-  file: string;
+
   title: string;
+
   purpose: string;
-  stage?: string;
-  altText?: string;
-  keywords?: string[];
+
+  file: string;
+
   mimeType?: string;
+
+  pageNumber?: number;
+
+  sourcePageRange?: string;
+
+  textbookReference?: string;
+
+  origin:
+    | "textbook"
+    | "founder"
+    | "ai-generated";
+
+  preserveOriginal: boolean;
+
+  stage?:
+    | "Warm-up"
+    | "Presentation"
+    | "Practice"
+    | "Production"
+    | "Assessment"
+    | "Homework";
+
+  displayMode?:
+    | "fullscreen"
+    | "side-panel"
+    | "popup"
+    | "background"
+    | "whiteboard";
+
+  whiteboardPriority?: number;
+
+  elvyInstruction?: string;
+
+  learnerInstruction?: string;
+
+  expectedAnswer?: string;
+
+  duration?: string;
+
+  order?: number;
+
+  altText?: string;
+
+  keywords?: string[];
 };
 
 export type ReadyPackageLesson = {
@@ -58,14 +112,52 @@ export type ReadyPackageTeacherPlan = {
   plan: Record<string, unknown>;
 };
 
+export type ReadyPackageBlueprintStage = {
+  stage:
+    | "Warm-up"
+    | "Presentation"
+    | "Practice"
+    | "Production"
+    | "Assessment"
+    | "Homework";
+
+  duration: string;
+
+  teachingObjective: string;
+
+  whiteboardPlan: string;
+
+  elvyScript: string;
+
+  learnerTaskSequence: string[];
+
+  expectedResponses: string[];
+
+  evaluationCriteria: string;
+
+  feedbackStrategy: string;
+
+  supportLadder: string[];
+
+  successCriteria: string[];
+
+  retryLimit: number;
+
+  successAction: string;
+
+  recoveryAction: string;
+
+  transition: string;
+
+  // Optional compatibility field for older packages.
+  instructions?: string;
+};
+
 export type ReadyPackageElvyBlueprint = {
   id: string;
   lessonId: string;
-  stages: Array<{
-    stage: string;
-    instructions: string;
-  }>;
-  teachingRules?: Record<string, unknown>;
+  stages: ReadyPackageBlueprintStage[];
+  teachingRules: Record<string, unknown>;
 };
 
 export type ReadyPackageManifest = {

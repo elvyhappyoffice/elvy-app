@@ -1090,12 +1090,83 @@ export const ElvyPackageRepository = {
 
     if (!packageRow) return false;
 
+    const packageUuid = String((packageRow as any).id);
+
+    const lessonRows = await throwOnError(
+      "Package lesson lookup before delete",
+      client
+        .from("lessons")
+        .select("id")
+        .eq("package_id", packageUuid),
+    );
+
+    const lessonIds = Array.isArray(lessonRows)
+      ? lessonRows
+          .map((row: any) => String(row?.id || "").trim())
+          .filter(Boolean)
+      : [];
+
+    if (lessonIds.length > 0) {
+      await throwOnError(
+        "Lesson completion cleanup",
+        client.from("lesson_completion").delete().in("lesson_id", lessonIds),
+      );
+
+      await throwOnError(
+        "Teacher plan cleanup",
+        client.from("teacher_plans").delete().in("lesson_id", lessonIds),
+      );
+
+      await throwOnError(
+        "Record-book cleanup",
+        client.from("record_book_entries").delete().in("lesson_id", lessonIds),
+      );
+
+      await throwOnError(
+        "Elvy blueprint cleanup",
+        client.from("elvy_blueprints").delete().in("lesson_id", lessonIds),
+      );
+    }
+
+    await throwOnError(
+      "Teaching asset cleanup",
+      client.from("teaching_assets").delete().eq("package_id", packageUuid),
+    );
+
+    await throwOnError(
+      "Lesson cleanup",
+      client.from("lessons").delete().eq("package_id", packageUuid),
+    );
+
+    await throwOnError(
+      "Unit cleanup",
+      client.from("units").delete().eq("package_id", packageUuid),
+    );
+
+    await throwOnError(
+      "Curriculum hierarchy cleanup",
+      client.from("levels").delete().eq("package_id", packageUuid),
+    );
+
+    await throwOnError(
+      "Validation report cleanup",
+      client
+        .from("package_validation_reports")
+        .delete()
+        .eq("package_id", packageUuid),
+    );
+
+    await throwOnError(
+      "Package import log cleanup",
+      client
+        .from("package_import_logs")
+        .delete()
+        .eq("package_id", packageUuid),
+    );
+
     await throwOnError(
       "Elvy package delete",
-      client
-        .from("elvy_packages")
-        .delete()
-        .eq("id", String((packageRow as any).id)),
+      client.from("elvy_packages").delete().eq("id", packageUuid),
     );
 
     return true;

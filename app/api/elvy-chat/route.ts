@@ -3,6 +3,12 @@ import fs from "fs";
 import path from "path";
 import { supabase } from "@/lib/supabase";
 import { AI } from "@/lib/openai";
+import {
+  processStudentTeachingTurn,
+  type ProcessStudentTeachingTurnOutput,
+} from "@/services/teaching-brain/runtime-integration";
+import type { TeachingSessionState } from "@/services/teaching-brain/session-engine";
+import { generateTeachingBrainResponse } from "@/services/teaching-brain/ai-response-generator";
 
 export const runtime = "nodejs";
 
@@ -10,6 +16,19 @@ const DATA_FILE = path.join(process.cwd(), "data", "dailySupportUsers.json");
 const ACCOUNTS_FILE = path.join(process.cwd(), "data", "elvyAccounts.json");
 const STUDENTS_FILE = path.join(process.cwd(), "data", "students.json");
 const STUDENTS_TABLE = "language_center_students";
+
+function hasSupabaseConfig() {
+  const hasUrl = Boolean(
+    process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL,
+  );
+  const hasKey = Boolean(
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+      process.env.SUPABASE_ANON_KEY,
+  );
+
+  return hasUrl && hasKey;
+}
 
 const AI_ACTIVE = true;
 const MAX_USER_CHARS = 500;
@@ -160,6 +179,7 @@ function mapSupabaseStudent(row: any) {
     username: row.username || "",
     password: row.password || "",
     code: row.code || "",
+    nativeLanguage: row.native_language || "Arabic",
     level: row.level || "",
     sublevel: row.sublevel || "",
     unit: row.unit || "",
@@ -208,7 +228,7 @@ async function getStudentByCode(studentCode: string) {
 
   const cleanStudentCode = studentCode.trim().toUpperCase();
 
-  if (process.env.VERCEL) {
+  if (hasSupabaseConfig()) {
     const { data, error } = await supabase
       .from(STUDENTS_TABLE)
       .select("*")
@@ -258,7 +278,7 @@ async function updateStudentTime(
 
   const cleanStudentCode = studentCode.trim().toUpperCase();
 
-  if (process.env.VERCEL) {
+  if (hasSupabaseConfig()) {
     const { data, error: loadError } = await supabase
       .from(STUDENTS_TABLE)
       .select("id, seconds_used")
@@ -705,6 +725,123 @@ function calculateInteractionSeconds(userMessage: string, elvyReply: string) {
   return 30;
 }
 
+type StudentTeachingRuntimeResult = ProcessStudentTeachingTurnOutput;
+
+function isTeachingSessionState(value: unknown): value is TeachingSessionState {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+
+  const session = value as Partial<TeachingSessionState>;
+
+  return Boolean(
+    String(session.id || "").trim() &&
+      String(session.lessonId || "").trim() &&
+      String(session.learnerId || "").trim() &&
+      String(session.status || "").trim()
+  );
+}
+
+function getTeachingSessionFromBody(body: any): TeachingSessionState | undefined {
+  const supplied = body?.teachingSession ?? body?.lessonDirectorState;
+  return isTeachingSessionState(supplied) ? supplied : undefined;
+}
+
+function buildStudentTeachingAssignment(student: any) {
+  return {
+    studentId: String(student?.id || student?.code || "").trim(),
+    studentCode: String(student?.code || "").trim(),
+    studentName: String(
+      student?.name || student?.displayName || student?.username || "student"
+    ).trim(),
+    nativeLanguage: String(
+      student?.nativeLanguage || student?.native_language || "Arabic"
+    ).trim(),
+    level: String(student?.level || "").trim(),
+    sublevel: String(student?.sublevel || "").trim(),
+    unit: String(student?.unit || "").trim(),
+    lesson: student?.lesson ?? 1,
+    lessonTitle: String(student?.lessonTitle || "").trim() || undefined,
+  };
+}
+
+async function runStudentTeachingRuntime(
+  body: any,
+  student: any,
+  message: string,
+  secondsRemaining: number | null
+): Promise<StudentTeachingRuntimeResult> {
+  const assignment = buildStudentTeachingAssignment(student);
+
+  return processStudentTeachingTurn({
+    assignment,
+    session: getTeachingSessionFromBody(body),
+    sessionId:
+      typeof body?.teachingSessionId === "string"
+        ? body.teachingSessionId
+        : typeof body?.lessonSessionId === "string"
+          ? body.lessonSessionId
+          : undefined,
+    message,
+    normalizedMessage:
+      typeof body?.normalizedMessage === "string"
+        ? body.normalizedMessage
+        : undefined,
+    modality:
+      body?.messageModality === "voice" ||
+      body?.messageModality === "choice" ||
+      body?.messageModality === "none"
+        ? body.messageModality
+        : "text",
+    selectedOptionId:
+      typeof body?.selectedOptionId === "string"
+        ? body.selectedOptionId
+        : undefined,
+    audioReference:
+      typeof body?.audioReference === "string"
+        ? body.audioReference
+        : undefined,
+    speechConfidence:
+      typeof body?.speechConfidence === "number"
+        ? body.speechConfidence
+        : undefined,
+    responseTimeMs:
+      typeof body?.responseTimeMs === "number"
+        ? body.responseTimeMs
+        : undefined,
+    previousEvaluations: Array.isArray(body?.previousEvaluations)
+      ? body.previousEvaluations
+      : undefined,
+    learnerName: assignment.studentName,
+    requestedL1: Boolean(body?.requestedL1),
+    consecutiveL1Turns:
+      typeof body?.consecutiveL1Turns === "number"
+        ? body.consecutiveL1Turns
+        : undefined,
+    timeRemainingMinutes:
+      typeof secondsRemaining === "number"
+        ? Math.max(0, secondsRemaining / 60)
+        : undefined,
+    learnerReady:
+      typeof body?.learnerReady === "boolean"
+        ? body.learnerReady
+        : undefined,
+    humanSupportAvailable:
+      typeof body?.humanSupportAvailable === "boolean"
+        ? body.humanSupportAvailable
+        : undefined,
+    finalCompletionCheck: Boolean(body?.finalCompletionCheck),
+    recommendedNextLessonId:
+      typeof body?.recommendedNextLessonId === "string"
+        ? body.recommendedNextLessonId
+        : undefined,
+    metadata: {
+      source: "api/elvy-chat",
+      studentCode: assignment.studentCode,
+    },
+  });
+}
+
 export async function POST(req: Request) {
   try {
     if (!AI_ACTIVE) {
@@ -935,13 +1072,48 @@ export async function POST(req: Request) {
       },
     ];
 
-    const aiResponse = await AI.chat({
-      instructions: isStudentMode
-        ? getElvyLanguageCenterPrompt(studentProfile)
-        : getElvySystemPrompt(activeUser?.name || "friend"),
-      input: conversationInput,
-      maxOutputTokens: MAX_OUTPUT_TOKENS,
-    });
+    let teachingRuntimeResult: StudentTeachingRuntimeResult | null = null;
+
+    if (isStudentMode) {
+      try {
+        teachingRuntimeResult = await runStudentTeachingRuntime(
+          body,
+          studentProfile,
+          userMessage,
+          studentSecondsRemainingBefore
+        );
+      } catch (error) {
+        console.error("Teaching Runtime integration error:", error);
+
+        return NextResponse.json({
+          success: false,
+          studentMode: true,
+          reply:
+            "I could not load your assigned lesson right now. Please contact the language center.",
+          teachingRuntimeError: true,
+          secondsRemaining: studentSecondsRemainingBefore ?? 0,
+        });
+      }
+    }
+
+    const baseInstructions = isStudentMode
+      ? getElvyLanguageCenterPrompt(studentProfile)
+      : getElvySystemPrompt(activeUser?.name || "friend");
+
+    const aiResponse =
+      isStudentMode && teachingRuntimeResult
+        ? await generateTeachingBrainResponse({
+            runtimeResult: teachingRuntimeResult,
+            studentProfile,
+            conversation: conversationInput,
+            baseInstructions,
+            maxOutputTokens: MAX_OUTPUT_TOKENS,
+          })
+        : await AI.chat({
+            instructions: baseInstructions,
+            input: conversationInput,
+            maxOutputTokens: MAX_OUTPUT_TOKENS,
+          });
 
     const reply =
       aiResponse.text ||
@@ -1038,6 +1210,29 @@ export async function POST(req: Request) {
       secondsUsed,
       secondsRemaining,
       studentMode: isStudentMode,
+      teachingSession:
+        teachingRuntimeResult?.teaching.session || null,
+      lessonDirectorState:
+        teachingRuntimeResult?.teaching.session || null,
+      classroomPlan:
+        teachingRuntimeResult?.teaching.directorCommand || null,
+      whiteboard:
+        teachingRuntimeResult?.teaching.whiteboard || null,
+      teachingResult: teachingRuntimeResult
+        ? {
+            lessonId: teachingRuntimeResult.teaching.lessonId,
+            sessionId: teachingRuntimeResult.teaching.sessionId,
+            learnerTurnId: teachingRuntimeResult.teaching.learnerTurnId,
+            evaluation: teachingRuntimeResult.teaching.evaluation,
+            objectiveTracking:
+              teachingRuntimeResult.teaching.objectiveTracking,
+            decision: teachingRuntimeResult.teaching.decision,
+            support: teachingRuntimeResult.teaching.support || null,
+            whiteboard: teachingRuntimeResult.teaching.whiteboard || null,
+            completion: teachingRuntimeResult.teaching.completion || null,
+            warnings: teachingRuntimeResult.teaching.warnings,
+          }
+        : null,
     });
 
   } catch (error) {

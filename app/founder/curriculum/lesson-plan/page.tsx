@@ -28,7 +28,22 @@ type IntegratedSkillRow = {
 
 type ElvyBlueprintStage = {
   stage: string;
-  instructions: string;
+  duration: string;
+  teachingObjective: string;
+  whiteboardPlan: string | string[];
+  elvyScript: string;
+  learnerTaskSequence: string[];
+  expectedResponses: string[];
+  evaluationCriteria: string;
+  feedbackStrategy: string;
+  supportLadder: string[];
+  successCriteria: string[];
+  retryLimit: number;
+  successAction: string;
+  recoveryAction: string;
+  transition: string;
+  /** Legacy field kept so older locally saved lesson plans still open. */
+  instructions?: string;
 };
 
 type LessonPlan = {
@@ -293,28 +308,105 @@ const starterPlan: LessonPlan = {
   elvyBlueprint: [
     {
       stage: "Warm-up",
-      instructions:
-        "Greet the learner warmly. Use simple English first. If the learner is a beginner and confused, briefly support with L1, then return to English.",
+      duration: "5 minutes",
+      teachingObjective: "Activate prior knowledge and prepare the learner to use simple greetings.",
+      whiteboardPlan: ["Hello", "Hi", "What is your name?"],
+      elvyScript: "Greet the learner warmly, model Hello and Hi, and invite a short response.",
+      learnerTaskSequence: ["Listen to the greeting", "Repeat the greeting", "Reply using Hello or Hi"],
+      expectedResponses: ["Hello", "Hi"],
+      evaluationCriteria: "The learner responds to a greeting with an appropriate expression.",
+      feedbackStrategy: "Praise the response, then model once more if pronunciation needs support.",
+      supportLadder: ["Repeat slowly", "Show the expression on the board", "Allow brief L1 clarification"],
+      successCriteria: ["Responds appropriately", "Attempts clear pronunciation"],
+      retryLimit: 3,
+      successAction: "Continue to the presentation stage.",
+      recoveryAction: "Model the greeting again and let the learner choose between Hello and Hi.",
+      transition: "Now let us learn how to introduce ourselves.",
     },
     {
       stage: "Presentation",
-      instructions:
-        "Model the dialogue line by line. Ask the learner to repeat. Focus on meaning before correction.",
+      duration: "10 minutes",
+      teachingObjective: "Present the target dialogue and connect meaning, sound, and written form.",
+      whiteboardPlan: ["I’m ___.", "My name is ___.", "Nice to meet you."],
+      elvyScript: "Model the dialogue line by line. Ask the learner to listen first, then repeat each line.",
+      learnerTaskSequence: ["Listen", "Repeat", "Match expressions to their meanings"],
+      expectedResponses: ["I’m ...", "My name is ...", "Nice to meet you"],
+      evaluationCriteria: "The learner recognizes and repeats the key expressions.",
+      feedbackStrategy: "Correct one feature at a time and keep the focus on meaning before accuracy.",
+      supportLadder: ["Replay or repeat", "Chunk the sentence", "Provide a sentence starter"],
+      successCriteria: ["Recognizes the expressions", "Repeats the model intelligibly"],
+      retryLimit: 3,
+      successAction: "Move to guided practice.",
+      recoveryAction: "Reduce the model to shorter chunks and rebuild the full expression.",
+      transition: "Let us practise the dialogue together.",
     },
     {
       stage: "Practice",
-      instructions:
-        "Prompt the learner with sentence starters. Give one correction at a time. Praise successful attempts.",
+      duration: "15 minutes",
+      teachingObjective: "Help the learner use greetings and introductions with guided support.",
+      whiteboardPlan: ["Hello. I’m ___.", "What is your name?", "Nice to meet you."],
+      elvyScript: "Prompt the learner with sentence starters, alternate roles, and gradually remove support.",
+      learnerTaskSequence: ["Complete sentence starters", "Answer Elvy", "Switch roles"],
+      expectedResponses: ["Hello. I’m ...", "My name is ...", "Nice to meet you too"],
+      evaluationCriteria: "The learner completes the exchange with limited prompting.",
+      feedbackStrategy: "Give brief corrective feedback after each completed exchange.",
+      supportLadder: ["Show the full model", "Show only the first words", "Use a visual cue"],
+      successCriteria: ["Completes the exchange", "Uses the target expressions appropriately"],
+      retryLimit: 3,
+      successAction: "Advance to independent production.",
+      recoveryAction: "Return to one guided exchange before trying again.",
+      transition: "Now try the conversation with less help.",
     },
     {
       stage: "Production",
-      instructions:
-        "Ask the learner to complete a short self-introduction without full prompts. Offer hints only when needed.",
+      duration: "15 minutes",
+      teachingObjective: "Enable the learner to produce a short personal introduction independently.",
+      whiteboardPlan: "Display only a small prompt: Greet → Name → Polite response.",
+      elvyScript: "Ask the learner to introduce themselves without a full model. Offer hints only when needed.",
+      learnerTaskSequence: ["Greet", "Say their name", "Respond politely", "Repeat with a variation"],
+      expectedResponses: ["Hello. I’m ...", "Nice to meet you"],
+      evaluationCriteria: "The learner performs a complete and understandable short exchange.",
+      feedbackStrategy: "Acknowledge successful communication first, then give one improvement point.",
+      supportLadder: ["Give a keyword", "Give a sentence starter", "Restore the model temporarily"],
+      successCriteria: ["Communicates the intended meaning", "Completes all parts of the exchange"],
+      retryLimit: 2,
+      successAction: "Proceed to assessment.",
+      recoveryAction: "Repeat the production task with a visual sequence prompt.",
+      transition: "Let us check what you can do by yourself.",
     },
     {
-      stage: "Assessment & Feedback",
-      instructions:
-        "Check whether the learner can greet, introduce themselves, and respond politely. Give brief feedback and one next step.",
+      stage: "Assessment",
+      duration: "10 minutes",
+      teachingObjective: "Check whether the learner can greet, introduce themselves, and respond politely.",
+      whiteboardPlan: "Hide full answers and display only the assessment task.",
+      elvyScript: "Conduct one short role-play, listen without interrupting, then provide concise feedback.",
+      learnerTaskSequence: ["Complete the role-play", "Listen to feedback", "Correct one sentence if needed"],
+      expectedResponses: ["A complete greeting and introduction exchange"],
+      evaluationCriteria: "Appropriate greeting, clear name statement, polite response, and understandable pronunciation.",
+      feedbackStrategy: "State what was successful, identify one next step, and invite one corrected attempt.",
+      supportLadder: ["Repeat the question", "Provide one keyword", "Allow one guided retry"],
+      successCriteria: ["Meets the communicative objective", "Uses the main expressions accurately enough"],
+      retryLimit: 2,
+      successAction: "Mark the lesson objective as achieved and assign homework.",
+      recoveryAction: "Return to the weakest expression for a short focused practice.",
+      transition: "You are ready for a short follow-up task.",
+    },
+    {
+      stage: "Homework",
+      duration: "5 minutes",
+      teachingObjective: "Consolidate the lesson through a short personal introduction task.",
+      whiteboardPlan: "Write: Hello. I’m ___. My name is ___. Nice to meet you.",
+      elvyScript: "Explain the homework clearly and ask the learner to repeat what they need to do.",
+      learnerTaskSequence: ["Read the task", "Explain the task in their own words", "Complete it after the lesson"],
+      expectedResponses: ["I will write or record a short introduction"],
+      evaluationCriteria: "The learner understands the homework instructions.",
+      feedbackStrategy: "Confirm the task and encourage the learner to keep it short and accurate.",
+      supportLadder: ["Show an example", "Break the task into three steps"],
+      successCriteria: ["Can explain the homework task"],
+      retryLimit: 2,
+      successAction: "Close the lesson positively.",
+      recoveryAction: "Restate the homework using simpler language.",
+      transition: "End the lesson and save progress.",
     },
   ],
 
@@ -676,7 +768,11 @@ function LessonPlanPageContent() {
     setSaveStatus("Unsaved changes");
   }
 
-  function updateBlueprint(index: number, field: keyof ElvyBlueprintStage, value: string) {
+  function updateBlueprint(
+    index: number,
+    field: keyof ElvyBlueprintStage,
+    value: ElvyBlueprintStage[keyof ElvyBlueprintStage],
+  ) {
     setPlan((prev) => ({
       ...prev,
       elvyBlueprint: prev.elvyBlueprint.map((stage, stageIndex) =>
@@ -756,6 +852,18 @@ function LessonPlanPageContent() {
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#039;");
+  }
+
+  function blueprintText(value: string | string[] | undefined) {
+    if (Array.isArray(value)) return value.filter(Boolean).join(" • ");
+    return String(value || "");
+  }
+
+  function blueprintLines(value: string) {
+    return value
+      .split(/\r?\n|•/)
+      .map((item) => item.trim())
+      .filter(Boolean);
   }
 
   function renderPrintableLessonPlanHtml() {
@@ -1466,7 +1574,22 @@ function LessonPlanPageContent() {
         (stage) => `
           <tr>
             <td>${escapeHtml(stage.stage)}</td>
-            <td>${escapeHtml(stage.instructions)}</td>
+            <td>${escapeHtml(stage.duration)}</td>
+            <td>
+              <p><strong>Teaching objective:</strong> ${escapeHtml(stage.teachingObjective)}</p>
+              <p><strong>Whiteboard plan:</strong> ${escapeHtml(blueprintText(stage.whiteboardPlan))}</p>
+              <p><strong>Elvy script:</strong> ${escapeHtml(stage.elvyScript || stage.instructions || "")}</p>
+              <p><strong>Learner tasks:</strong> ${escapeHtml(blueprintText(stage.learnerTaskSequence))}</p>
+              <p><strong>Expected responses:</strong> ${escapeHtml(blueprintText(stage.expectedResponses))}</p>
+              <p><strong>Evaluation:</strong> ${escapeHtml(stage.evaluationCriteria)}</p>
+              <p><strong>Feedback:</strong> ${escapeHtml(stage.feedbackStrategy)}</p>
+              <p><strong>Support ladder:</strong> ${escapeHtml(blueprintText(stage.supportLadder))}</p>
+              <p><strong>Success criteria:</strong> ${escapeHtml(blueprintText(stage.successCriteria))}</p>
+              <p><strong>Retry limit:</strong> ${escapeHtml(String(stage.retryLimit ?? ""))}</p>
+              <p><strong>On success:</strong> ${escapeHtml(stage.successAction)}</p>
+              <p><strong>Recovery:</strong> ${escapeHtml(stage.recoveryAction)}</p>
+              <p><strong>Transition:</strong> ${escapeHtml(stage.transition)}</p>
+            </td>
           </tr>
         `,
       )
@@ -1540,7 +1663,8 @@ function LessonPlanPageContent() {
       font-weight: 800;
       text-align: center;
     }
-    th:first-child, td:first-child { width: 24%; font-weight: 800; }
+    th:first-child, td:first-child { width: 16%; font-weight: 800; }
+    th:nth-child(2), td:nth-child(2) { width: 12%; font-weight: 800; }
     .metadata td:first-child {
       width: 22%;
       background: #faf5ff;
@@ -1574,7 +1698,8 @@ function LessonPlanPageContent() {
       <thead>
         <tr>
           <th>Stage</th>
-          <th>Elvy Instructions</th>
+          <th>Duration</th>
+          <th>Complete Elvy Teaching Instructions</th>
         </tr>
       </thead>
       <tbody>${blueprintRows}</tbody>
@@ -1700,10 +1825,29 @@ function LessonPlanPageContent() {
       0,
     );
 
-    const blueprintFieldCount = plan.elvyBlueprint.length * 2;
+    const blueprintFieldCount = plan.elvyBlueprint.length * 15;
     const completedBlueprintFields = plan.elvyBlueprint.reduce(
       (total, stage) =>
-        total + [stage.stage, stage.instructions].filter(hasContent).length,
+        total +
+        [
+          stage.stage,
+          stage.duration,
+          stage.teachingObjective,
+          stage.whiteboardPlan,
+          stage.elvyScript || stage.instructions,
+          stage.learnerTaskSequence,
+          stage.expectedResponses,
+          stage.evaluationCriteria,
+          stage.feedbackStrategy,
+          stage.supportLadder,
+          stage.successCriteria,
+          stage.retryLimit,
+          stage.successAction,
+          stage.recoveryAction,
+          stage.transition,
+        ].filter((value) =>
+          Array.isArray(value) ? value.length > 0 : hasContent(value),
+        ).length,
       0,
     );
 
@@ -2367,26 +2511,92 @@ function LessonPlanPageContent() {
       case "elvy-blueprint":
         return (
           <ContentPanel>
-            <div className="grid gap-4 lg:grid-cols-2">
+            <div className="space-y-5">
               {plan.elvyBlueprint.map((stage, index) => (
-                <div key={`${stage.stage}-${index}`} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                  <label>
-                    <span className={labelClass}>Stage</span>
-                    <input
-                      className={inputClass}
-                      value={stage.stage}
-                      onChange={(event) => updateBlueprint(index, "stage", event.target.value)}
-                    />
-                  </label>
-                  <label className="mt-3 block">
-                    <span className={labelClass}>Elvy Instructions</span>
-                    <textarea
-                      className={inputClass}
-                      rows={5}
-                      value={stage.instructions}
-                      onChange={(event) => updateBlueprint(index, "instructions", event.target.value)}
-                    />
-                  </label>
+                <div
+                  key={`${stage.stage}-${index}`}
+                  className="rounded-2xl border border-violet-200 bg-violet-50/40 p-5"
+                >
+                  <div className="grid gap-4 md:grid-cols-[1fr_180px]">
+                    <label>
+                      <span className={labelClass}>Stage</span>
+                      <input
+                        className={inputClass}
+                        value={stage.stage || ""}
+                        onChange={(event) => updateBlueprint(index, "stage", event.target.value)}
+                      />
+                    </label>
+                    <label>
+                      <span className={labelClass}>Duration</span>
+                      <input
+                        className={inputClass}
+                        value={stage.duration || ""}
+                        onChange={(event) => updateBlueprint(index, "duration", event.target.value)}
+                      />
+                    </label>
+                  </div>
+
+                  <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                    <label className="block">
+                      <span className={labelClass}>Teaching Objective</span>
+                      <textarea className={inputClass} rows={3} value={stage.teachingObjective || ""} onChange={(event) => updateBlueprint(index, "teachingObjective", event.target.value)} />
+                    </label>
+                    <label className="block">
+                      <span className={labelClass}>Whiteboard Plan</span>
+                      <textarea className={inputClass} rows={3} value={blueprintText(stage.whiteboardPlan)} onChange={(event) => updateBlueprint(index, "whiteboardPlan", blueprintLines(event.target.value))} />
+                    </label>
+                    <label className="block lg:col-span-2">
+                      <span className={labelClass}>Elvy Script</span>
+                      <textarea className={inputClass} rows={4} value={stage.elvyScript || stage.instructions || ""} onChange={(event) => updateBlueprint(index, "elvyScript", event.target.value)} />
+                    </label>
+                    <label className="block">
+                      <span className={labelClass}>Learner Task Sequence — one item per line</span>
+                      <textarea className={inputClass} rows={4} value={blueprintText(stage.learnerTaskSequence)} onChange={(event) => updateBlueprint(index, "learnerTaskSequence", blueprintLines(event.target.value))} />
+                    </label>
+                    <label className="block">
+                      <span className={labelClass}>Expected Responses — one item per line</span>
+                      <textarea className={inputClass} rows={4} value={blueprintText(stage.expectedResponses)} onChange={(event) => updateBlueprint(index, "expectedResponses", blueprintLines(event.target.value))} />
+                    </label>
+                    <label className="block">
+                      <span className={labelClass}>Evaluation Criteria</span>
+                      <textarea className={inputClass} rows={3} value={stage.evaluationCriteria || ""} onChange={(event) => updateBlueprint(index, "evaluationCriteria", event.target.value)} />
+                    </label>
+                    <label className="block">
+                      <span className={labelClass}>Feedback Strategy</span>
+                      <textarea className={inputClass} rows={3} value={stage.feedbackStrategy || ""} onChange={(event) => updateBlueprint(index, "feedbackStrategy", event.target.value)} />
+                    </label>
+                    <label className="block">
+                      <span className={labelClass}>Support Ladder — one item per line</span>
+                      <textarea className={inputClass} rows={4} value={blueprintText(stage.supportLadder)} onChange={(event) => updateBlueprint(index, "supportLadder", blueprintLines(event.target.value))} />
+                    </label>
+                    <label className="block">
+                      <span className={labelClass}>Success Criteria — one item per line</span>
+                      <textarea className={inputClass} rows={4} value={blueprintText(stage.successCriteria)} onChange={(event) => updateBlueprint(index, "successCriteria", blueprintLines(event.target.value))} />
+                    </label>
+                    <label>
+                      <span className={labelClass}>Retry Limit</span>
+                      <input
+                        className={inputClass}
+                        type="number"
+                        min={1}
+                        value={stage.retryLimit ?? 1}
+                        onChange={(event) => updateBlueprint(index, "retryLimit", Math.max(1, Number(event.target.value) || 1))}
+                      />
+                    </label>
+                    <div />
+                    <label className="block">
+                      <span className={labelClass}>Success Action</span>
+                      <textarea className={inputClass} rows={3} value={stage.successAction || ""} onChange={(event) => updateBlueprint(index, "successAction", event.target.value)} />
+                    </label>
+                    <label className="block">
+                      <span className={labelClass}>Recovery Action</span>
+                      <textarea className={inputClass} rows={3} value={stage.recoveryAction || ""} onChange={(event) => updateBlueprint(index, "recoveryAction", event.target.value)} />
+                    </label>
+                    <label className="block lg:col-span-2">
+                      <span className={labelClass}>Transition</span>
+                      <textarea className={inputClass} rows={2} value={stage.transition || ""} onChange={(event) => updateBlueprint(index, "transition", event.target.value)} />
+                    </label>
+                  </div>
                 </div>
               ))}
             </div>

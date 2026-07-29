@@ -32,6 +32,7 @@ type Level = {
 
 type CurriculumTreeRecord = {
   syllabusId: string;
+  packageId?: string;
   title: string;
   levelId: string;
   levelTitle: string;
@@ -86,6 +87,7 @@ export default function CurriculumDashboard() {
   const [isLoading, setIsLoading] = useState(true);
   const [isImportingReadyPackage, setIsImportingReadyPackage] = useState(false);
   const [isConfirmingReadyPackage, setIsConfirmingReadyPackage] = useState(false);
+  const [deletingPackageId, setDeletingPackageId] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState("Loading curriculum...");
   const [packageStatus, setPackageStatus] = useState(
     "No GSRP imported in this session.",
@@ -112,8 +114,19 @@ export default function CurriculumDashboard() {
 
         const cloudTreeRecords = cloudPackages
           .map(
-            (item: { treeRecord?: CurriculumTreeRecord }) =>
-              item.treeRecord,
+            (item: {
+              packageId?: string;
+              treeRecord?: CurriculumTreeRecord;
+            }) =>
+              item.treeRecord
+                ? {
+                    ...item.treeRecord,
+                    packageId:
+                      item.packageId ??
+                      item.treeRecord.packageId ??
+                      item.treeRecord.syllabusId,
+                  }
+                : undefined,
           )
           .filter(
             (
@@ -321,8 +334,19 @@ export default function CurriculumDashboard() {
         setCurriculumTreeRecords(
           refreshedPackages
             .map(
-              (item: { treeRecord?: CurriculumTreeRecord }) =>
-                item.treeRecord,
+              (item: {
+                packageId?: string;
+                treeRecord?: CurriculumTreeRecord;
+              }) =>
+                item.treeRecord
+                  ? {
+                      ...item.treeRecord,
+                      packageId:
+                        item.packageId ??
+                        item.treeRecord.packageId ??
+                        item.treeRecord.syllabusId,
+                    }
+                  : undefined,
             )
             .filter(
               (
@@ -332,7 +356,13 @@ export default function CurriculumDashboard() {
         );
       } else {
         setCurriculumTreeRecords((previousRecords) => [
-          treeRecord,
+          {
+            ...treeRecord,
+            packageId:
+              summary.packageId ??
+              treeRecord.packageId ??
+              treeRecord.syllabusId,
+          },
           ...previousRecords.filter(
             (record) => record.syllabusId !== treeRecord.syllabusId,
           ),
@@ -399,10 +429,120 @@ export default function CurriculumDashboard() {
       )}&lessonId=${encodeURIComponent(firstLesson.id)}`,
     );
   }
+  async function deleteCurriculum(record: CurriculumTreeRecord) {
+    const confirmed = window.confirm(
+      `Delete "${record.title}"?
+
+This will permanently remove the curriculum, Lesson Plan Studio content, Teacher Plans, Elvy Blueprints, Teaching Assets, and related records.`,
+    );
+
+    if (!confirmed || deletingPackageId) return;
+
+    const packageId = record.packageId ?? record.syllabusId;
+
+    try {
+      setDeletingPackageId(packageId);
+      setSaveStatus(`Deleting ${record.title}...`);
+
+      const response = await fetch(
+        `/api/elvy-packages?packageId=${encodeURIComponent(packageId)}`,
+        {
+          method: "DELETE",
+          headers: { Accept: "application/json" },
+        },
+      );
+
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok || !data?.success) {
+        throw new Error(
+          data?.error ||
+            data?.message ||
+            `Delete failed (${response.status}).`,
+        );
+      }
+
+      const refreshed = await fetch("/api/elvy-packages", {
+        cache: "no-store",
+      });
+      const refreshedData = await refreshed.json().catch(() => null);
+
+      if (refreshed.ok && refreshedData?.success) {
+        const packages = Array.isArray(refreshedData.packages)
+          ? refreshedData.packages
+          : [];
+
+        setLevels(
+          packages
+            .map((item: { level?: Level }) => item.level)
+            .filter(
+              (item: Level | undefined): item is Level => Boolean(item),
+            ),
+        );
+
+        setCurriculumTreeRecords(
+          packages
+            .map(
+              (item: {
+                packageId?: string;
+                treeRecord?: CurriculumTreeRecord;
+              }) =>
+                item.treeRecord
+                  ? {
+                      ...item.treeRecord,
+                      packageId:
+                        item.packageId ??
+                        item.treeRecord.packageId ??
+                        item.treeRecord.syllabusId,
+                    }
+                  : undefined,
+            )
+            .filter(
+              (
+                item: CurriculumTreeRecord | undefined,
+              ): item is CurriculumTreeRecord => Boolean(item),
+            ),
+        );
+      } else {
+        setLevels((previous) =>
+          previous.filter((item) => item.id !== record.levelId),
+        );
+        setCurriculumTreeRecords((previous) =>
+          previous.filter(
+            (item) =>
+              item.packageId !== packageId &&
+              item.syllabusId !== record.syllabusId,
+          ),
+        );
+      }
+
+      const activeSyllabusId = window.localStorage.getItem(
+        ACTIVE_LESSON_STUDIO_SYLLABUS_KEY,
+      );
+      if (activeSyllabusId === record.syllabusId) {
+        window.localStorage.removeItem(
+          ACTIVE_LESSON_STUDIO_SYLLABUS_KEY,
+        );
+      }
+
+      setSaveStatus("Curriculum deleted successfully.");
+      setPackageStatus(`Deleted ${record.title} from Elvy Cloud.`);
+    } catch (error) {
+      console.error("Curriculum delete failed:", error);
+      const message =
+        error instanceof Error ? error.message : "Delete failed.";
+      alert(message);
+      setSaveStatus("Delete failed.");
+      setPackageStatus(message);
+    } finally {
+      setDeletingPackageId(null);
+    }
+  }
 
   function formatDate(value: string) {
     try {
       return new Intl.DateTimeFormat("en", {
+        timeZone: "UTC",
         year: "numeric",
         month: "short",
         day: "2-digit",
@@ -553,7 +693,9 @@ export default function CurriculumDashboard() {
                   className="crd-import-btn"
                   type="button"
                   onClick={openReadyPackageImport}
-                  disabled={isImportingReadyPackage || isLoading}
+                  disabled={Boolean(
+                    isImportingReadyPackage || isLoading,
+                  )}
                 >
                   {isImportingReadyPackage
                     ? "Validating and importing..."
@@ -668,13 +810,43 @@ export default function CurriculumDashboard() {
                     Imported on
                     <strong>{formatDate(record.generatedAt)}</strong>
                   </div>
-                  <button
-                    className="crd-open"
-                    type="button"
-                    onClick={() => openLessonPlanStudio(record)}
-                  >
-                    ↗ Open in Lesson Plan Studio
-                  </button>
+<div style={{ display: "flex", gap: 10 }}>
+  <button
+    className="crd-open"
+    type="button"
+    onClick={() => openLessonPlanStudio(record)}
+  >
+    ↗ Open in Lesson Plan Studio
+  </button>
+
+  <button
+    type="button"
+    onClick={() => deleteCurriculum(record)}
+    disabled={deletingPackageId !== null}
+    style={{
+      border: "1.5px solid #dc2626",
+      borderRadius: 11,
+      background: "#fff",
+      color: "#dc2626",
+      padding: "11px 17px",
+      fontSize: 13,
+      fontWeight: 950,
+      cursor:
+        deletingPackageId !== null ? "not-allowed" : "pointer",
+      opacity:
+        deletingPackageId !== null &&
+        deletingPackageId !==
+          (record.packageId ?? record.syllabusId)
+          ? 0.55
+          : 1,
+    }}
+  >
+    {deletingPackageId ===
+    (record.packageId ?? record.syllabusId)
+      ? "Deleting..."
+      : "🗑 Delete"}
+  </button>
+</div>
                 </article>
               ))}
             </div>

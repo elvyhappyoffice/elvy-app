@@ -2,11 +2,31 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import ElvyAvatar from "@/components/elvy/ElvyAvatar";
+import Whiteboard, {
+  type WhiteboardContentType,
+} from "@/components/whiteboard/Whiteboard";
+import { resolveElvyState } from "@/components/elvy/elvy-state";
+import type { MouthState } from "@/components/elvy/studio/ElvyTorso";
 
 type Message = {
   sender: "elvy" | "user";
   text: string;
 };
+
+type LessonDirectorState = Record<string, unknown>;
+
+function mouthForSpokenCharacter(character: string): MouthState {
+  const sound = character.toLowerCase();
+
+  if (/[mbp]/.test(sound)) return "m-b-p";
+  if (/[aeiy]/.test(sound)) return "a-e";
+  if (sound === "o") return "o";
+  if (/[uw]/.test(sound)) return "u";
+  if (/\s|[.,!?;:'"-]/.test(sound)) return "closed-smile";
+
+  return "open";
+}
 
 type ElvyAccount = {
   username: string;
@@ -23,6 +43,7 @@ type StudentProfile = {
   username: string;
   password: string;
   code: string;
+  nativeLanguage?: string;
   level: string;
   sublevel: string;
   unit: string;
@@ -36,7 +57,189 @@ type StudentProfile = {
 
 const ELVY_ACCOUNT_KEY = "elvy_mobile_account";
 const ELVY_STUDENT_PROFILE_KEY = "elvy_student_profile";
+const ELVY_LESSON_DIRECTOR_STATE_KEY = "elvy_lesson_director_state";
 const FREE_REPLIES_LIMIT = 3;
+const WHITEBOARD_SPEECH_INDEX = -1;
+
+type MobileWhiteboardContent = {
+  title?: string;
+  type: WhiteboardContentType;
+  text: string;
+};
+
+const EMPTY_WHITEBOARD_CONTENT: MobileWhiteboardContent = {
+  title: "",
+  type: "paragraph",
+  text: "",
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function textFromWhiteboardBlock(block: unknown): string {
+  if (!isRecord(block)) return "";
+
+  const lines: string[] = [];
+  const title = typeof block.title === "string" ? block.title.trim() : "";
+  const text = typeof block.text === "string" ? block.text.trim() : "";
+
+  if (title) lines.push(title);
+  if (text && text !== title) lines.push(text);
+
+  if (Array.isArray(block.segments)) {
+    const segmentText = block.segments
+      .map((segment) =>
+        isRecord(segment) && typeof segment.text === "string"
+          ? segment.text.trim()
+          : "",
+      )
+      .filter(Boolean)
+      .join(" ");
+
+    if (segmentText) lines.push(segmentText);
+  }
+
+  if (Array.isArray(block.items)) {
+    const itemText = block.items
+      .map((item) => {
+        if (!isRecord(item)) return "";
+
+        const primary =
+          typeof item.text === "string" ? item.text.trim() : "";
+        const secondary =
+          typeof item.secondaryText === "string"
+            ? item.secondaryText.trim()
+            : "";
+        const example =
+          typeof item.example === "string" ? item.example.trim() : "";
+
+        return [primary, secondary, example].filter(Boolean).join(" — ");
+      })
+      .filter(Boolean)
+      .map((item) => `• ${item}`)
+      .join("\n");
+
+    if (itemText) lines.push(itemText);
+  }
+
+  if (Array.isArray(block.dialogue)) {
+    const dialogueText = block.dialogue
+      .map((line) => {
+        if (!isRecord(line)) return "";
+
+        const speaker =
+          typeof line.speaker === "string" ? line.speaker.trim() : "";
+        const spokenText =
+          typeof line.text === "string" ? line.text.trim() : "";
+
+        if (!spokenText) return "";
+        return speaker ? `${speaker}: ${spokenText}` : spokenText;
+      })
+      .filter(Boolean)
+      .join("\n");
+
+    if (dialogueText) lines.push(dialogueText);
+  }
+
+  return lines.filter(Boolean).join("\n");
+}
+
+function inferWhiteboardContentType(
+  mode: unknown,
+  blocks: readonly unknown[],
+): WhiteboardContentType {
+  if (blocks.some((block) => isRecord(block) && Array.isArray(block.dialogue))) {
+    return "dialogue";
+  }
+
+  if (
+    mode === "question" ||
+    blocks.some(
+      (block) => isRecord(block) && String(block.kind || "") === "exercise",
+    )
+  ) {
+    return "exercise";
+  }
+
+  if (
+    blocks.some((block) => {
+      if (!isRecord(block)) return false;
+      const kind = String(block.kind || "");
+      return kind === "vocabulary" || kind === "word-list";
+    })
+  ) {
+    return "vocabulary";
+  }
+
+  return "paragraph";
+}
+
+function mapWhiteboardEngineOutput(
+  value: unknown,
+): MobileWhiteboardContent | null {
+  if (!isRecord(value)) return null;
+
+  const presentation = isRecord(value.presentation)
+    ? value.presentation
+    : value;
+
+  const allBlocks = Array.isArray(presentation.blocks)
+    ? presentation.blocks
+    : [];
+
+  const pages = Array.isArray(presentation.pages) ? presentation.pages : [];
+  const activePageIndex =
+    typeof presentation.activePageIndex === "number"
+      ? presentation.activePageIndex
+      : 0;
+  const activePage = isRecord(pages[activePageIndex])
+    ? pages[activePageIndex]
+    : null;
+  const activeBlockIds =
+    activePage && Array.isArray(activePage.blockIds)
+      ? new Set(activePage.blockIds.filter((id): id is string => typeof id === "string"))
+      : null;
+
+  const visibleBlocks = activeBlockIds
+    ? allBlocks.filter(
+        (block) =>
+          isRecord(block) &&
+          typeof block.id === "string" &&
+          activeBlockIds.has(block.id),
+      )
+    : allBlocks;
+
+  const text = visibleBlocks
+    .map(textFromWhiteboardBlock)
+    .filter(Boolean)
+    .join("\n\n")
+    .trim();
+
+  const clearBeforeDisplay = presentation.clearBeforeDisplay === true;
+  const mode = presentation.mode;
+
+  const title =
+    typeof presentation.title === "string"
+      ? presentation.title.trim()
+      : "";
+
+  if (!text && (clearBeforeDisplay || mode === "clear")) {
+    return {
+      title,
+      text: "",
+      type: "paragraph",
+    };
+  }
+
+  if (!text && !title) return null;
+
+  return {
+    title,
+    text,
+    type: inferWhiteboardContentType(mode, visibleBlocks),
+  };
+}
 const FREE_REPLIES_USED_KEY = "elvy_mobile_free_replies_used";
 const FREE_TRIAL_CODE_KEY = "elvy_mobile_free_trial_code";
 const SEEN_ADMIN_MESSAGES_KEY = "elvy_seen_admin_messages";
@@ -49,10 +252,6 @@ function formatTimeLeft(seconds: number) {
   const safeSeconds = Math.max(0, Math.floor(Number(seconds) || 0));
   const hours = Math.floor(safeSeconds / 3600);
   const minutes = Math.floor((safeSeconds % 3600) / 60);
-
-  if (hours <= 0) {
-    return `${minutes}m left`;
-  }
 
   return `${hours}h ${String(minutes).padStart(2, "0")}m left`;
 }
@@ -74,16 +273,32 @@ function formatCompactTimeLeft(seconds: number) {
   return `${hours}h ${String(minutes).padStart(2, "0")}m`;
 }
 
+function formatLiveCountdown(seconds: number) {
+  const safeSeconds = Math.max(0, Math.floor(Number(seconds) || 0));
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  const remainingSeconds = safeSeconds % 60;
+
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, "0")}:${String(remainingSeconds).padStart(2, "0")}`
+    : `${minutes}:${String(remainingSeconds).padStart(2, "0")}`;
+}
+
 export default function MobileElvyPage() {
   const router = useRouter();
 
   const AI_CONNECTED = true;
 
+  const [showWelcome, setShowWelcome] = useState(true);
   const [showTerms, setShowTerms] = useState(false);
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [showAccountForm, setShowAccountForm] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
+  const [showMainMenu, setShowMainMenu] = useState(false);
+  const [isCelebrating, setIsCelebrating] = useState(false);
+  const celebrationTimerRef = useRef<number | null>(null);
 
   const [accountMode, setAccountMode] = useState<"login" | "register">(
     "register",
@@ -95,6 +310,8 @@ export default function MobileElvyPage() {
   const [studentProfile, setStudentProfile] = useState<StudentProfile | null>(
     null,
   );
+  const [lessonDirectorState, setLessonDirectorState] =
+    useState<LessonDirectorState | null>(null);
   const [accountDisplayName, setAccountDisplayName] = useState("");
   const [accountMessage, setAccountMessage] = useState("");
 
@@ -138,6 +355,7 @@ export default function MobileElvyPage() {
     null,
   );
   const [speakingWordLength, setSpeakingWordLength] = useState(0);
+  const [speechMouth, setSpeechMouth] = useState<MouthState>("closed-smile");
   const [voiceMode, setVoiceMode] = useState(false);
   const speechSupported =
     typeof window !== "undefined" &&
@@ -155,6 +373,9 @@ export default function MobileElvyPage() {
     },
   ]);
 
+  const [whiteboardContent, setWhiteboardContent] =
+    useState<MobileWhiteboardContent>(EMPTY_WHITEBOARD_CONTENT);
+
   const isStudentMode = Boolean(studentProfile?.code?.startsWith("STUDENT-"));
 
   const ticketRequired =
@@ -163,6 +384,13 @@ export default function MobileElvyPage() {
 
   const interactionLocked =
     isSending || isVoiceLoading || isSpeaking || ticketRequired;
+
+  const elvyAnimationState = resolveElvyState({
+    isSpeaking,
+    isListening,
+    isThinking: isSending || isVoiceLoading,
+    isCelebrating,
+  });
 
   useEffect(() => {
     try {
@@ -188,13 +416,34 @@ export default function MobileElvyPage() {
           setActiveUserCode(parsedStudent.code);
           setRepliesLeft(0);
           setSecondsRemaining(Number(parsedStudent.secondsRemaining || 0));
+          setWhiteboardContent(EMPTY_WHITEBOARD_CONTENT);
+
+          const savedDirectorState = localStorage.getItem(
+            ELVY_LESSON_DIRECTOR_STATE_KEY,
+          );
+
+          if (savedDirectorState) {
+            try {
+              const parsedDirectorState = JSON.parse(savedDirectorState);
+
+              if (
+                parsedDirectorState?.studentCode === parsedStudent.code &&
+                parsedDirectorState?.state &&
+                typeof parsedDirectorState.state === "object"
+              ) {
+                setLessonDirectorState(parsedDirectorState.state);
+              }
+            } catch {
+              localStorage.removeItem(ELVY_LESSON_DIRECTOR_STATE_KEY);
+            }
+          }
+
           setMessages([
             {
               sender: "elvy",
               text: `Welcome back, ${parsedStudent.name || parsedStudent.username}. Your lesson is ${parsedStudent.level} / ${parsedStudent.sublevel} / ${parsedStudent.unit} / Lesson ${parsedStudent.lesson}${parsedStudent.lessonTitle ? `: ${parsedStudent.lessonTitle}` : ""}.`,
             },
           ]);
-          setChatOpen(true);
           return;
         }
       }
@@ -219,11 +468,11 @@ export default function MobileElvyPage() {
             text: `Welcome back, ${parsed.displayName || parsed.username}.`,
           },
         ]);
-        setChatOpen(true);
       }
     } catch {
       localStorage.removeItem(ELVY_ACCOUNT_KEY);
       localStorage.removeItem(ELVY_STUDENT_PROFILE_KEY);
+      localStorage.removeItem(ELVY_LESSON_DIRECTOR_STATE_KEY);
     }
   }, []);
 
@@ -374,35 +623,25 @@ export default function MobileElvyPage() {
   }, [studentProfile?.code]);
 
   useEffect(() => {
-    if (!studentProfile?.code?.startsWith("STUDENT-")) return;
-    if (studentProfile.status !== "Active") return;
+    if (typeof window === "undefined") return;
 
-    const interval = window.setInterval(() => {
-      setSecondsRemaining((prev) => {
-        const nextSeconds = Math.max(Number(prev || 0) - 1, 0);
+    const viewport = window.visualViewport;
+    if (!viewport) return;
 
-        setStudentProfile((currentStudent) => {
-          if (!currentStudent) return currentStudent;
+    const updateKeyboardState = () => {
+      const keyboardHeight = Math.max(0, window.innerHeight - viewport.height);
+      setKeyboardOpen(keyboardHeight > 140);
+    };
 
-          const updatedStudent = {
-            ...currentStudent,
-            secondsRemaining: nextSeconds,
-          };
+    updateKeyboardState();
+    viewport.addEventListener("resize", updateKeyboardState);
+    viewport.addEventListener("scroll", updateKeyboardState);
 
-          localStorage.setItem(
-            ELVY_STUDENT_PROFILE_KEY,
-            JSON.stringify(updatedStudent),
-          );
-
-          return updatedStudent;
-        });
-
-        return nextSeconds;
-      });
-    }, 1000);
-
-    return () => window.clearInterval(interval);
-  }, [studentProfile?.code, studentProfile?.status]);
+    return () => {
+      viewport.removeEventListener("resize", updateKeyboardState);
+      viewport.removeEventListener("scroll", updateKeyboardState);
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined" || !window.speechSynthesis) return;
@@ -456,6 +695,11 @@ export default function MobileElvyPage() {
         setSpeakingCharIndex(null);
         setSpeakingWordLength(0);
         voiceRequestLockRef.current = false;
+
+        if (celebrationTimerRef.current !== null) {
+          window.clearTimeout(celebrationTimerRef.current);
+          celebrationTimerRef.current = null;
+        }
       } catch {
         // Ignore cleanup errors.
       }
@@ -463,9 +707,15 @@ export default function MobileElvyPage() {
   }, []);
 
   function openTalkToElvy() {
-    setShowTerms(true);
-    setChatOpen(false);
+    // Preserve the original welcome-page flow:
+    // Talk to Elvy -> Terms -> Login/Register -> New classroom.
+    setAccountMode("login");
+    setAccountMessage("");
+    setStudentLoginCode("");
     setAcceptedTerms(false);
+    setChatOpen(false);
+    setShowAccountForm(false);
+    setShowTerms(true);
   }
 
   function continueToChat() {
@@ -473,6 +723,7 @@ export default function MobileElvyPage() {
     setShowTerms(false);
 
     if (account) {
+      setShowWelcome(false);
       setChatOpen(true);
       return;
     }
@@ -514,7 +765,9 @@ export default function MobileElvyPage() {
     }
 
     localStorage.removeItem(ELVY_ACCOUNT_KEY);
+    localStorage.removeItem(ELVY_LESSON_DIRECTOR_STATE_KEY);
     localStorage.setItem(ELVY_STUDENT_PROFILE_KEY, JSON.stringify(student));
+    setLessonDirectorState(null);
 
     const studentAccount: ElvyAccount = {
       username: student.username,
@@ -531,8 +784,10 @@ export default function MobileElvyPage() {
     setActiveUserCode(student.code);
     setRepliesLeft(0);
     setSecondsRemaining(Number(student.secondsRemaining || 0));
+    setWhiteboardContent(EMPTY_WHITEBOARD_CONTENT);
     setShowTicketInfo(false);
     setShowAccountForm(false);
+    setShowWelcome(false);
     setChatOpen(true);
     setAccountMessage("");
     setMessages([
@@ -610,7 +865,9 @@ export default function MobileElvyPage() {
 
       localStorage.setItem(ELVY_ACCOUNT_KEY, JSON.stringify(nextAccount));
       localStorage.removeItem(ELVY_STUDENT_PROFILE_KEY);
+      localStorage.removeItem(ELVY_LESSON_DIRECTOR_STATE_KEY);
       setStudentProfile(null);
+      setLessonDirectorState(null);
       if (accountMode === "register") {
         localStorage.removeItem(FREE_REPLIES_USED_KEY);
         localStorage.removeItem(FREE_TRIAL_CODE_KEY);
@@ -643,6 +900,7 @@ export default function MobileElvyPage() {
         setShowTicketInfo(false);
       }
       setShowAccountForm(false);
+      setShowWelcome(false);
       setChatOpen(true);
       setAccountMessage("");
       setMessages([
@@ -662,14 +920,18 @@ export default function MobileElvyPage() {
   function logoutAccount() {
     localStorage.removeItem(ELVY_ACCOUNT_KEY);
     localStorage.removeItem(ELVY_STUDENT_PROFILE_KEY);
+    localStorage.removeItem(ELVY_LESSON_DIRECTOR_STATE_KEY);
     setStudentProfile(null);
+    setLessonDirectorState(null);
     setAccount(null);
     setIsActivated(false);
     setActiveUserCode("");
     setRepliesLeft(0);
     setSecondsRemaining(0);
+    setWhiteboardContent(EMPTY_WHITEBOARD_CONTENT);
     setChatOpen(false);
-    setShowAccountForm(true);
+    setShowAccountForm(false);
+    setShowWelcome(true);
   }
 
   async function activateCode() {
@@ -718,7 +980,9 @@ export default function MobileElvyPage() {
 
       setRepliesLeft(Number(data.user?.repliesLeft || 0));
       setSecondsRemaining(
-        Number(data.user?.secondsRemaining || data.user?.seconds_remaining || 0),
+        Number(
+          data.user?.secondsRemaining || data.user?.seconds_remaining || 0,
+        ),
       );
 
       setShowTicketInfo(false);
@@ -1058,6 +1322,7 @@ export default function MobileElvyPage() {
       setSpeakingMessageIndex(null);
       setSpeakingCharIndex(null);
       setSpeakingWordLength(0);
+      setSpeechMouth("closed-smile");
     };
 
     const restartMicAfterSpeech = () => {
@@ -1087,14 +1352,27 @@ export default function MobileElvyPage() {
           Math.max(0, audio.currentTime / duration),
         );
 
+        const wordPosition = progress * wordMatches.length;
         const wordIndex = Math.min(
           wordMatches.length - 1,
-          Math.floor(progress * wordMatches.length),
+          Math.floor(wordPosition),
         );
 
-        if (wordIndex !== lastWordIndex) {
-          const currentWord = wordMatches[wordIndex];
+        const currentWord = wordMatches[wordIndex];
+        const wordProgress = Math.min(0.999, wordPosition - wordIndex);
 
+        if (currentWord) {
+          const spokenWord = currentWord[0];
+          const characterIndex = Math.min(
+            spokenWord.length - 1,
+            Math.floor(wordProgress * spokenWord.length),
+          );
+          setSpeechMouth(
+            mouthForSpokenCharacter(spokenWord[characterIndex] || " "),
+          );
+        }
+
+        if (wordIndex !== lastWordIndex) {
           if (currentWord && typeof currentWord.index === "number") {
             setSpeakingCharIndex(currentWord.index);
             setSpeakingWordLength(currentWord[0].length);
@@ -1162,6 +1440,7 @@ export default function MobileElvyPage() {
         setSpeakingMessageIndex(messageIndex);
         setSpeakingCharIndex(null);
         setSpeakingWordLength(0);
+        setSpeechMouth("closed-smile");
 
         stopHighlighting = startTimedHighlighting(audio);
       };
@@ -1182,6 +1461,7 @@ export default function MobileElvyPage() {
         setSpeakingMessageIndex(null);
         setSpeakingCharIndex(null);
         setSpeakingWordLength(0);
+        setSpeechMouth("closed-smile");
         restartMicAfterSpeech();
       };
 
@@ -1201,6 +1481,7 @@ export default function MobileElvyPage() {
         setSpeakingMessageIndex(null);
         setSpeakingCharIndex(null);
         setSpeakingWordLength(0);
+        setSpeechMouth("closed-smile");
 
         console.error("OpenAI TTS audio playback failed.");
       };
@@ -1248,7 +1529,8 @@ export default function MobileElvyPage() {
 
     const studentTicketActive =
       Boolean(studentProfile?.status === "Active") && secondsRemaining > 0;
-    const studentModeAllowed = Boolean(studentProfile?.status === "Active") && studentTicketActive;
+    const studentModeAllowed =
+      Boolean(studentProfile?.status === "Active") && studentTicketActive;
     const paidModeAllowed =
       !studentProfile &&
       isActivated &&
@@ -1324,6 +1606,8 @@ export default function MobileElvyPage() {
           freeTrialMode: freeModeAllowed,
           studentMode: studentModeAllowed,
           studentProfile: studentProfile || null,
+          lessonDirectorState:
+            studentModeAllowed ? lessonDirectorState : null,
           recentMessages: [
             ...messages,
             {
@@ -1336,19 +1620,60 @@ export default function MobileElvyPage() {
 
       const data = await response.json();
 
+      const nextWhiteboardContent = mapWhiteboardEngineOutput(
+        data?.whiteboard ?? data?.teachingResult?.whiteboard,
+      );
+
+      if (studentModeAllowed && nextWhiteboardContent) {
+        setWhiteboardContent(nextWhiteboardContent);
+      }
+
+      if (
+        studentModeAllowed &&
+        data?.lessonDirectorState &&
+        typeof data.lessonDirectorState === "object"
+      ) {
+        const nextLessonDirectorState =
+          data.lessonDirectorState as LessonDirectorState;
+
+        setLessonDirectorState(nextLessonDirectorState);
+
+        if (studentProfile?.code) {
+          localStorage.setItem(
+            ELVY_LESSON_DIRECTOR_STATE_KEY,
+            JSON.stringify({
+              studentCode: studentProfile.code,
+              state: nextLessonDirectorState,
+            }),
+          );
+        }
+      }
+
       const aiReply = data.reply || "I am sorry. I cannot reply right now.";
+
+      if (/\b(excellent|great|well done|correct|perfect|bravo|good job)\b/i.test(aiReply)) {
+        setIsCelebrating(true);
+
+        if (celebrationTimerRef.current !== null) {
+          window.clearTimeout(celebrationTimerRef.current);
+        }
+
+        celebrationTimerRef.current = window.setTimeout(() => {
+          setIsCelebrating(false);
+          celebrationTimerRef.current = null;
+        }, 1500);
+      }
 
       if (typeof data.secondsUsed === "number") {
         setLastSecondsUsed(data.secondsUsed);
         console.log("Elvy interaction seconds used:", data.secondsUsed);
-
-        if (paidModeAllowed && !studentModeAllowed) {
-          setSecondsRemaining((prev) => Math.max(prev - data.secondsUsed, 0));
-        }
       }
 
       if (typeof data.secondsRemaining === "number") {
-        const nextSecondsRemaining = Math.max(Number(data.secondsRemaining || 0), 0);
+        const nextSecondsRemaining = Math.max(
+          Number(data.secondsRemaining || 0),
+          0,
+        );
         setSecondsRemaining(nextSecondsRemaining);
 
         if (studentProfile?.code?.startsWith("STUDENT-")) {
@@ -1360,7 +1685,8 @@ export default function MobileElvyPage() {
               secondsRemaining: nextSecondsRemaining,
               secondsUsed:
                 typeof data.secondsUsed === "number"
-                  ? Number(prev.secondsUsed || 0) + Number(data.secondsUsed || 0)
+                  ? Number(prev.secondsUsed || 0) +
+                    Number(data.secondsUsed || 0)
                   : prev.secondsUsed,
             };
 
@@ -1419,580 +1745,387 @@ export default function MobileElvyPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[#ececec] p-4">
+    <main
+      className="min-h-screen sm:flex sm:items-center sm:justify-center sm:p-4"
+      style={{
+        background:
+          "radial-gradient(circle at 50% 35%, #fffaf0 0%, #f8edd7 48%, #ead8ba 100%)",
+      }}
+    >
       <div
-        className="relative overflow-hidden rounded-[40px] bg-[#f8ead8] shadow-2xl"
-        style={{ width: "390px", height: "844px" }}
+        className={`relative mx-auto overflow-hidden ${
+          showWelcome ? "bg-[#f6e5ca]" : "bg-[#f7f2ec] shadow-2xl"
+        }`}
+        style={{
+          width: showWelcome
+            ? "min(100vw, calc(100dvh * 864 / 1856), 430px)"
+            : "min(100vw, 430px)",
+          aspectRatio: showWelcome ? "864 / 1856" : undefined,
+          height: showWelcome
+            ? "auto"
+            : keyboardOpen
+              ? "100dvh"
+              : "min(100dvh, calc(110vw + 190px), 665px)",
+          maxHeight: showWelcome
+            ? "100dvh"
+            : keyboardOpen
+              ? "932px"
+              : "665px",
+          minHeight: showWelcome ? "0" : keyboardOpen ? "0" : "590px",
+        }}
       >
-        <img
-          src="/elvy-mobile.png"
-          alt="Elvy Mobile"
-          className="absolute inset-0 h-full w-full object-cover"
-        />
+        {showWelcome && (
+          <section className="absolute inset-0 z-30 overflow-hidden bg-[#f6e5ca]">
+            <img
+              src="/elvy-mobile-welcome.png"
+              alt="Elvy welcome screen"
+              className="absolute inset-0 h-full w-full object-contain"
+              draggable={false}
+            />
 
-        {!account && !chatOpen && !showTerms && !showAccountForm && (
-          <>
             <button
+              type="button"
               onClick={openTalkToElvy}
-              className="absolute"
-              style={{ left: "7%", top: "74.5%", width: "86%", height: "8%" }}
+              className="absolute left-[3%] top-[62.8%] h-[10.1%] w-[94%] rounded-[26px] focus:outline-none focus-visible:ring-4 focus-visible:ring-white/80"
               aria-label="Talk to Elvy"
             />
 
             <button
+              type="button"
               onClick={() => router.push("/mobile/meet")}
-              className="absolute"
-              style={{ left: "7%", top: "84%", width: "86%", height: "7%" }}
+              className="absolute left-[3%] top-[74.0%] h-[9.7%] w-[94%] rounded-[26px] focus:outline-none focus-visible:ring-4 focus-visible:ring-white/80"
               aria-label="Meet Elvy"
             />
 
             <button
+              type="button"
               onClick={() => router.push("/happy-office")}
-              className="absolute"
-              style={{ left: "7%", top: "88.7%", width: "86%", height: "6.5%" }}
+              className="absolute left-[3%] top-[84.5%] h-[9.4%] w-[94%] rounded-[26px] focus:outline-none focus-visible:ring-4 focus-visible:ring-white/80"
               aria-label="Open Happy Office website"
             />
+          </section>
+        )}
+
+        {!showWelcome && (
+          <>
+        {/* Compact lesson header: two lines normally, one line with keyboard open */}
+        <header
+          className="absolute left-3 right-3 z-40 rounded-[20px] bg-white/95 shadow-[0_8px_24px_rgba(66,43,24,0.18)] backdrop-blur"
+          style={{
+            top: "0px",
+            padding: keyboardOpen ? "8px 12px" : "10px 14px",
+          }}
+        >
+          <div className="flex items-center gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 items-center gap-1.5 whitespace-nowrap leading-none">
+                <h1 className="truncate text-[17px] font-black text-[#191919]">
+                  Spotlight 1
+                </h1>
+                <span className="text-[#f27c0a]">•</span>
+                <span className="shrink-0 text-[11px] font-bold text-[#555]">
+                  {studentProfile
+                    ? `${studentProfile.sublevel || studentProfile.level} · ${studentProfile.unit} · L${studentProfile.lesson}`
+                    : "A1 · Unit 1 · Lesson 2"}
+                </span>
+              </div>
+
+              {!keyboardOpen && (
+                <div className="mt-[2px] flex min-w-0 items-center gap-1.5 leading-tight">
+                  <span className="shrink-0 text-[11px] font-extrabold text-[#f27c0a]">
+                    {studentProfile?.lessonTitle || "Meeting New People"}
+                  </span>
+                  <span className="text-[#f27c0a]">•</span>
+                  <span className="truncate text-[10px] font-medium text-[#222]">
+                    🎯 Introduce yourself and ask someone&apos;s name.
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {(studentProfile?.status === "Active" || isActivated) &&
+              secondsRemaining > 0 && (
+                <div className="shrink-0 rounded-full bg-[#fff3df] px-2.5 py-1 text-[11px] font-black tabular-nums text-[#9a4d00] shadow-inner">
+                  ⏱ {formatTimeLeft(secondsRemaining)}
+                </div>
+              )}
+
+            <div
+              className="grid h-10 w-10 shrink-0 place-items-center rounded-full"
+              style={{
+                background:
+                  "conic-gradient(#f27c0a 0deg 216deg, #ddd 216deg 360deg)",
+              }}
+            >
+              <div className="grid h-8 w-8 place-items-center rounded-full bg-white text-[12px] font-black text-[#111]">
+                60%
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowMainMenu((prev) => !prev)}
+              className="grid h-8 w-7 shrink-0 place-items-center rounded-full text-lg font-black text-[#222] transition hover:bg-black/5 active:scale-95"
+              aria-label="Open navigation menu"
+              aria-expanded={showMainMenu}
+            >
+              ⋮
+            </button>
+          </div>
+        </header>
+
+        {showMainMenu && (
+          <>
+            <button
+              type="button"
+              aria-label="Close navigation menu"
+              onClick={() => setShowMainMenu(false)}
+              className="absolute inset-0 z-40 bg-transparent"
+            />
+
+            <div
+              className="absolute right-4 z-[70] w-48 overflow-hidden rounded-2xl border border-black/10 bg-white/98 p-2 shadow-[0_14px_36px_rgba(30,20,10,0.28)] backdrop-blur"
+              style={{
+                top: keyboardOpen ? "58px" : "66px",
+              }}
+            >
+              {[
+                ["⌂", "Home", "/mobile"],
+                ["▤", "Lessons", "/mobile/lessons"],
+                ["A", "Vocabulary", "/mobile/vocabulary"],
+                ["▥", "Progress", "/mobile/progress"],
+                ["☰", "More", "/mobile/more"],
+              ].map(([icon, label, path]) => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => {
+                    setShowMainMenu(false);
+                    router.push(path);
+                  }}
+                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[13px] font-bold text-[#2d2925] transition hover:bg-[#f5eee6] active:scale-[0.99]"
+                >
+                  <span className="grid h-7 w-7 place-items-center rounded-lg bg-[#f4ede5] text-[17px]">
+                    {icon}
+                  </span>
+                  <span>{label}</span>
+                </button>
+              ))}
+
+              {account && (
+                <>
+                  <div className="my-2 h-px bg-black/10" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const confirmed = window.confirm(
+                        "Log out? You will return to the login screen.",
+                      );
+
+                      if (!confirmed) return;
+
+                      setShowMainMenu(false);
+                      logoutAccount();
+                    }}
+                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[13px] font-extrabold text-red-600 transition hover:bg-red-50 active:scale-[0.99]"
+                  >
+                    <span className="grid h-7 w-7 place-items-center rounded-lg bg-red-50 text-[17px]">
+                      ↪
+                    </span>
+                    <span>Log out</span>
+                  </button>
+                </>
+              )}
+            </div>
           </>
         )}
 
-        {showTerms && (
-          <div className="absolute left-4 right-4 bottom-4 z-50 max-h-[48%] overflow-y-auto rounded-[30px] bg-white/95 p-5 shadow-2xl backdrop-blur">
-            <h2 className="text-xl font-bold text-[#3b2418]">Terms of Use</h2>
+        {/* Classroom layer */}
+        <section
+          className="absolute inset-x-0 overflow-hidden"
+          style={{
+            top: keyboardOpen
+              ? "clamp(-78px, calc(52px - 30.3vw), -45px)"
+              : "clamp(-70px, calc(60px - 30.3vw), -36px)",
+            bottom: keyboardOpen ? "66px" : "86px",
+          }}
+        >
+          <img
+            src="/classroom.png"
+            alt="Elvy classroom"
+            className="absolute inset-x-0 top-0 h-auto w-full object-contain"
+            style={{ objectPosition: "center top" }}
+          />
 
-            <div className="mt-3 space-y-3 text-sm leading-6 text-[#6b5a4c]">
-              <p>
-                Elvy helps you express messages clearly, politely, and
-                meaningfully.
-              </p>
-              <p>
-                Elvy does not replace medical, legal, financial, psychological,
-                or emergency services.
-              </p>
-              <p>
-                Do not share passwords, bank details, private documents, or
-                sensitive personal information.
-              </p>
-              <p>
-                Please use Elvy respectfully. Harmful, abusive, or unsafe use is
-                not allowed.
-              </p>
-            </div>
-
-            <label className="mt-4 flex items-start gap-3 rounded-2xl bg-[#f4e6d6] p-3 text-sm text-[#3b2418]">
-              <input
-                type="checkbox"
-                checked={acceptedTerms}
-                onChange={(e) => setAcceptedTerms(e.target.checked)}
-                className="mt-1 h-4 w-4 shrink-0"
-              />
-              <span>I have read and agree to continue using Elvy.</span>
-            </label>
-
-            <button
-              type="button"
-              onClick={continueToChat}
-              disabled={!acceptedTerms}
-              className="mt-4 block w-full rounded-2xl px-5 py-3 text-center text-base font-bold shadow"
-              style={{
-                backgroundColor: acceptedTerms ? "#4a2d1f" : "#d8c8b6",
-                color: acceptedTerms ? "#ffffff" : "#4a2d1f",
-              }}
-            >
-              Continue
-            </button>
-
-            <button
-              onClick={() => setShowTerms(false)}
-              className="mt-3 block w-full rounded-2xl bg-[#f1e1cf] px-5 py-3 text-center text-[#4a2d1f]"
-            >
-              Cancel
-            </button>
-          </div>
-        )}
-
-        {showAccountForm && (
+          {/* Dynamic lesson whiteboard: uses the full writable board area. */}
           <div
-            className="absolute left-5 right-5 z-50 rounded-[32px] border border-[#ead8c0] bg-[#fff8ef]/95 px-5 py-4 shadow-[0_16px_38px_rgba(72,45,25,0.28)] backdrop-blur"
+            className="absolute z-10 overflow-hidden"
             style={{
-              top: "47%",
+              left: "4.2%",
+              top: "min(34vw, 146px)",
+              width: "61.5%",
+              height: "min(63vw, 271px)",
             }}
           >
-            <div className="mb-3 flex items-start gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#d2ad62] text-lg text-white shadow-[0_6px_12px_rgba(72,45,25,0.22)]">
-                👤
-              </div>
-
-              <div>
-                <h2 className="text-[18px] font-extrabold leading-tight text-[#1f4f2b]">
-                  <span className="text-[#d7ffd9] drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]">
-                    {accountMode === "register" ? "Create account" : "Log in"}
-                  </span>
-                </h2>
-
-                <p className="mt-1 text-[12px] leading-5 text-[#5f4a38]">
-                  Your account keeps your username and ticket so you
-                  can return to Elvy easily.
-                </p>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex items-center gap-3 rounded-2xl border border-[#d8c5ad] bg-white/95 px-3 py-2 shadow-[inset_0_1px_2px_rgba(0,0,0,0.04),0_4px_10px_rgba(72,45,25,0.08)]">
-                <span className="text-base font-bold text-[#6d5a48]">@</span>
-                <input
-                  type="text"
-                  value={accountUsername}
-                  onChange={(e) => setAccountUsername(e.target.value)}
-                  placeholder="Username"
-                  className="min-w-0 flex-1 bg-transparent text-[14px] text-[#2b1a12] outline-none placeholder:text-[#8d8074]"
-                />
-              </div>
-
-              <div className="flex items-center gap-3 rounded-2xl border border-[#d8c5ad] bg-white/95 px-3 py-2 shadow-[inset_0_1px_2px_rgba(0,0,0,0.04),0_4px_10px_rgba(72,45,25,0.08)]">
-                <span className="text-base text-[#6d5a48]">🔒</span>
-                <input
-                  type="password"
-                  value={accountPassword}
-                  onChange={(e) => setAccountPassword(e.target.value)}
-                  placeholder="Password"
-                  className="min-w-0 flex-1 bg-transparent text-[14px] text-[#2b1a12] outline-none placeholder:text-[#8d8074]"
-                />
-              </div>
-
-              {accountMode === "login" && (
-                <div className="flex items-center gap-3 rounded-2xl border border-[#d8c5ad] bg-white/95 px-3 py-2 shadow-[inset_0_1px_2px_rgba(0,0,0,0.04),0_4px_10px_rgba(72,45,25,0.08)]">
-                  <span className="text-base text-[#6d5a48]">🎓</span>
-                  <input
-                    type="text"
-                    value={studentLoginCode}
-                    onChange={(e) =>
-                      setStudentLoginCode(e.target.value.toUpperCase())
-                    }
-                    placeholder="Student code (only for center students)"
-                    className="min-w-0 flex-1 bg-transparent text-[14px] text-[#2b1a12] outline-none placeholder:text-[#8d8074]"
-                  />
-                </div>
-              )}
-            </div>
-
-            {accountMessage && (
-              <div className="mt-2 rounded-2xl border border-red-200 bg-white/95 px-3 py-2 shadow-sm">
-                <p className="text-[12px] font-bold text-red-700">
-                  {accountMessage}
-                </p>
-              </div>
-            )}
-
-            <button
-              type="button"
-              onClick={submitAccount}
-              className="mt-4 w-full rounded-[24px] border border-[#2f7d32] bg-gradient-to-b from-[#43a047] to-[#1f6b2b] px-5 py-3 text-center shadow-[0_10px_22px_rgba(31,107,43,0.35)] transition-all active:scale-[0.98]"
-            >
-              <div className="flex items-center justify-center gap-3">
-                <div className="flex h-7 w-7 items-center justify-center rounded-full bg-white/20 text-sm font-black text-[#eaffea] shadow-inner">
-                  ✓
-                </div>
-
-                <span className="text-[16px] font-extrabold tracking-[0.2px] text-[#f4fff4] drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)]">
-                  {accountMode === "register" ? "Create account" : "Log in"}
-                </span>
-              </div>
-            </button>
-
-            <p className="mt-2 text-center text-[11px] font-semibold text-[#315b38]">
-              Your information is secure and private.
-            </p>
-
-            <div className="my-2 flex items-center gap-3 text-[11px] font-bold text-[#9a8a78]">
-              <div className="h-px flex-1 bg-[#e1d2bf]" />
-              OR
-              <div className="h-px flex-1 bg-[#e1d2bf]" />
-            </div>
-
-            <button
-              type="button"
-              onClick={() => {
-                setAccountMode(
-                  accountMode === "register" ? "login" : "register",
-                );
-                setAccountMessage("");
-                setStudentLoginCode("");
-              }}
-              className="block w-full rounded-2xl border border-[#4a2d1f] bg-white/85 px-4 py-2 text-center text-[13px] font-extrabold text-[#4a2d1f] shadow-sm"
-            >
-              {accountMode === "register"
-                ? "I already have an account  ›"
-                : "Create a new account  ›"}
-            </button>
-
-            <button
-              onClick={() => setShowAccountForm(false)}
-              className="mt-1 block w-full rounded-2xl px-5 py-1.5 text-center text-[13px] font-semibold text-[#6b5a4c]"
-            >
-              Cancel
-            </button>
+            <Whiteboard
+              title={whiteboardContent.title}
+              text={whiteboardContent.text}
+              type={whiteboardContent.type}
+              activeCharIndex={
+                isSpeaking && speakingMessageIndex === WHITEBOARD_SPEECH_INDEX
+                  ? speakingCharIndex
+                  : null
+              }
+              activeWordLength={
+                isSpeaking && speakingMessageIndex === WHITEBOARD_SPEECH_INDEX
+                  ? speakingWordLength
+                  : 0
+              }
+              footer={null}
+            />
           </div>
-        )}
 
+          {/* Independent avatar animation layer. */}
+          <ElvyAvatar
+            state={elvyAnimationState}
+            keyboardOpen={keyboardOpen}
+            speechMouth={speechMouth}
+          />
+
+          {/* Small whiteboard speaker below Elvy, outside the board.
+              It appears only after the Teaching Brain sends board content. */}
+          {whiteboardContent.text.trim() && (
+            <button
+              type="button"
+              onClick={() =>
+                speakText(
+                  whiteboardContent.text,
+                  WHITEBOARD_SPEECH_INDEX,
+                )
+              }
+              disabled={isVoiceLoading || isSpeaking}
+              className="absolute z-30 grid h-8 w-8 place-items-center rounded-full bg-white/90 text-[15px] shadow-md transition active:scale-95 disabled:opacity-40"
+              style={{
+                right: "93%",
+                top: "min(89vw, 390px)",
+              }}
+              aria-label="Listen to the whiteboard lesson"
+              title="Listen to the whiteboard lesson"
+            >
+              {isVoiceLoading &&
+              voiceLoadingMessageIndex === WHITEBOARD_SPEECH_INDEX
+                ? "⏳"
+                : "🔊"}
+            </button>
+          )}
+
+          {/* Start state */}
+          {!chatOpen && !showTerms && !showAccountForm && (
+            <button
+              type="button"
+              onClick={openTalkToElvy}
+              className="absolute bottom-[92px] left-1/2 z-30 -translate-x-1/2 rounded-full bg-[#0878df] px-8 py-3 text-[15px] font-extrabold text-white shadow-[0_8px_20px_rgba(0,96,190,0.35)] active:scale-[0.98]"
+            >
+              Start learning with Elvy
+            </button>
+          )}
+
+          {/* Compact conversation layer */}
+          {chatOpen && (
+            <div
+              className="absolute left-4 right-4 z-30"
+              style={{
+                top: "min(97.2vw, 418px)",
+                bottom: "8px",
+              }}
+            >
+              <div className="h-full overflow-y-auto pr-1 [scrollbar-width:none]">
+                <div className="flex min-h-full flex-col justify-end gap-2 pb-1">
+                  {messages
+                    .map((msg, index) => ({ msg, index }))
+                    .filter(({ msg, index }) => {
+                      if (index !== 0) return true;
+                      return !/^Welcome( back)?[, ]/i.test(msg.text);
+                    })
+                    .map(({ msg, index }) => (
+                      <div
+                        key={`${msg.sender}-${index}`}
+                        className={
+                          msg.sender === "elvy"
+                            ? "flex max-w-[82%] items-end gap-2 self-start"
+                            : "max-w-[72%] self-end"
+                        }
+                      >
+                        {msg.sender === "elvy" && (
+                          <img
+                            src="/elvy-alone.png"
+                            alt="Elvy"
+                            className="h-9 w-9 shrink-0 rounded-full bg-white/90 object-contain p-0.5 shadow"
+                          />
+                        )}
+
+                        <div
+                          className={
+                            msg.sender === "elvy"
+                              ? "rounded-[18px] rounded-bl-[5px] bg-white/95 px-3 py-2 text-[12px] font-medium leading-[17px] text-[#171717] shadow-md"
+                              : "rounded-[18px] rounded-br-[5px] bg-[#d8f6c8]/95 px-3 py-2 text-[12px] font-medium leading-[17px] text-[#171717] shadow-md"
+                          }
+                        >
+                          {renderMessageText(msg.text, index)}
+                          {msg.sender === "elvy" && (
+                            <button
+                              type="button"
+                              onClick={() => speakText(msg.text, index)}
+                              disabled={isVoiceLoading || isSpeaking}
+                              className="ml-2 inline-flex align-middle text-[13px] disabled:opacity-40"
+                              aria-label="Listen to Elvy"
+                            >
+                              {isVoiceLoading &&
+                              voiceLoadingMessageIndex === index
+                                ? "⏳"
+                                : "🔊"}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+
+                  {isSending && (
+                    <div className="self-start rounded-[18px] bg-white/95 px-3 py-2 text-[12px] font-semibold text-[#444] shadow-md">
+                      Elvy is replying...
+                    </div>
+                  )}
+
+                  {isListening && (
+                    <div className="self-center rounded-full bg-white/95 px-4 py-1.5 text-[11px] font-extrabold text-green-700 shadow">
+                      Listening... speak now
+                    </div>
+                  )}
+
+                  <div ref={messagesEndRef} />
+                </div>
+              </div>
+            </div>
+          )}
+        </section>
+
+        {/* Input and voice controls */}
         {chatOpen && (
           <div
-            className="absolute z-50 flex flex-col overflow-hidden"
-            style={{
-              left: "14px",
-              right: "14px",
-              top: "47%",
-              bottom: "18px",
-              borderRadius: "26px",
-              background: "rgba(255, 244, 229, 0.96)",
-              border: "1px solid rgba(216, 185, 143, 0.75)",
-              boxShadow: "0 18px 38px rgba(72, 45, 25, 0.24)",
-              backdropFilter: "blur(8px)",
-              WebkitBackdropFilter: "blur(8px)",
-              padding: "14px 14px 12px 14px",
-            }}
+            className="absolute left-3 right-3 z-50"
+            style={{ bottom: "8px" }}
           >
-            <div
-              className="shrink-0"
-              style={{
-                paddingBottom: "10px",
-                borderBottom: "1px solid rgba(216, 185, 143, 0.85)",
-              }}
-            >
-              <div
-                className="relative flex items-center justify-center"
-                style={{ minHeight: "38px", paddingLeft: "82px", paddingRight: "72px" }}
+            <div className="flex items-center gap-2 rounded-full bg-white/95 p-2 shadow-[0_8px_22px_rgba(45,28,12,0.25)]">
+              <button
+                type="button"
+                onClick={startVoiceInput}
+                disabled={isListening || interactionLocked}
+                className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[#0878df] text-[20px] text-white disabled:bg-[#9ebfe0]"
+                aria-label="Speak to Elvy"
               >
-                {account && (
-                  <button
-                    onClick={logoutAccount}
-                    className="absolute left-0 top-0 inline-flex items-center gap-1 rounded-full bg-[#f1e1cf] text-[#4a2d1f] shadow-sm active:scale-[0.98]"
-                    style={{ padding: "6px 9px", fontSize: "10px", fontWeight: 800 }}
-                  >
-                    <span style={{ fontSize: "13px", lineHeight: "13px" }}>↪</span>
-                    Logout
-                  </button>
-                )}
+                {isListening ? "●" : "🎤"}
+              </button>
 
-                <h2
-                  className="font-extrabold text-[#3b2418]"
-                  style={{
-                    fontSize: "15px",
-                    lineHeight: "22px",
-                    whiteSpace: "nowrap",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    maxWidth: "100%",
-                    textAlign: "center",
-                  }}
-                >
-                  {account
-                    ? `Talk to Elvy · ${account.displayName}`
-                    : "Talk to Elvy"}
-                </h2>
-
-                <button
-                  onClick={() => setChatOpen(false)}
-                  className="absolute right-4 top-0 inline-flex items-center gap-1 rounded-full bg-[#f1e1cf] text-[#4a2d1f] shadow-sm active:scale-[0.98]"
-                  style={{ padding: "6px 9px", fontSize: "10px", fontWeight: 800 }}
-                >
-                  <span style={{ fontSize: "13px", lineHeight: "13px" }}>×</span>
-                  Close
-                </button>
-              </div>
-
-              {studentProfile ? (
-                <p
-                  className="text-center font-bold text-green-700"
-                  style={{
-                    fontSize: "11px",
-                    lineHeight: "16px",
-                    fontWeight: 900,
-                    marginTop: "2px",
-                    whiteSpace: "nowrap",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    maxWidth: "100%",
-                  }}
-                  title={`Student · ${studentProfile.level} · ${studentProfile.sublevel} · Lesson ${studentProfile.lesson} · Time: ${formatCompactTimeLeft(secondsRemaining)}`}
-                >
-                  Student · {studentProfile.level} · {studentProfile.sublevel}{" "}
-                  · Lesson {studentProfile.lesson} · Time: {formatCompactTimeLeft(secondsRemaining)}
-                </p>
-              ) : (
-                isActivated && (
-                  <p
-                    className="text-center font-bold text-green-700"
-                    style={{ fontSize: "11px", lineHeight: "15px" }}
-                  >
-                    Ticket active · {formatTimeLeft(secondsRemaining)}
-                  </p>
-                )
-              )}
-            </div>
-
-            <div
-              className="min-h-0 flex-1 space-y-3 overflow-y-auto"
-              style={{
-                padding: "16px 4px 10px 4px",
-                background: "transparent",
-                scrollbarWidth: "thin",
-                scrollbarColor: "rgba(166, 124, 82, 0.35) transparent",
-              }}
-            >
-              {messages.map((msg, index) => (
-                <div
-                  key={index}
-                  className={
-                    msg.sender === "elvy"
-                      ? "mr-auto flex max-w-[96%] items-start gap-2"
-                      : "ml-auto max-w-[82%]"
-                  }
-                >
-                  {msg.sender === "elvy" && (
-                    <div
-                      style={{
-                        position: "relative",
-                        width: "72px",
-                        height: "76px",
-                        flexShrink: 0,
-                        marginTop: "2px",
-                      }}
-                    >
-                      {isSpeaking && speakingMessageIndex === index && (
-                        <>
-                          <span
-                            style={{
-                              position: "absolute",
-                              right: "-8px",
-                              top: "18px",
-                              width: "10px",
-                              height: "10px",
-                              borderRadius: "50%",
-                              background: "#22c55e",
-                              animation: "elvyWave 1s infinite",
-                            }}
-                          />
-
-                          <span
-                            style={{
-                              position: "absolute",
-                              right: "-18px",
-                              top: "14px",
-                              width: "18px",
-                              height: "18px",
-                              borderRadius: "50%",
-                              border: "2px solid #22c55e",
-                              animation: "elvyWave 1s infinite",
-                            }}
-                          />
-
-                          <span
-                            style={{
-                              position: "absolute",
-                              right: "-30px",
-                              top: "10px",
-                              width: "28px",
-                              height: "28px",
-                              borderRadius: "50%",
-                              border: "2px solid #22c55e",
-                              animation: "elvyWave 1s infinite",
-                            }}
-                          />
-                        </>
-                      )}
-
-                      <img
-                        src="/elvy-public.png"
-                        alt="Elvy"
-                        className="shrink-0"
-                        style={{
-                          width: "56px",
-                          height: "76px",
-                          objectFit: "contain",
-                          background: "transparent",
-                          border: "none",
-                          boxShadow: "none",
-                          filter:
-                            isSpeaking && speakingMessageIndex === index
-                              ? "drop-shadow(0 0 10px rgba(17,138,59,0.6))"
-                              : "drop-shadow(0 3px 5px rgba(72,45,25,0.12))",
-                          animation:
-                            isSpeaking && speakingMessageIndex === index
-                              ? "elvySpeakPulse 1.1s ease-in-out infinite"
-                              : "none",
-                        }}
-                      />
-
-                      <button
-                        type="button"
-                        onClick={() => speakText(msg.text, index)}
-                        disabled={isVoiceLoading || isSpeaking}
-                        aria-label="Listen to Elvy"
-                        title={
-                          isVoiceLoading && voiceLoadingMessageIndex === index
-                            ? "Loading voice..."
-                            : isSpeaking && speakingMessageIndex === index
-                              ? "Elvy is speaking..."
-                              : "Listen"
-                        }
-                        className="absolute flex items-center justify-center rounded-full transition-all active:scale-[0.95]"
-                        style={{
-                          left: "50px",
-                          top: "21px",
-                          width: "20px",
-                          height: "20px",
-                          border: "none",
-                          background: "transparent",
-                          color:
-                            isSpeaking && speakingMessageIndex === index
-                              ? "#118a3b"
-                              : "#2b1a12",
-                          fontSize: "17px",
-                          lineHeight: "17px",
-                          opacity:
-                            isVoiceLoading || isSpeaking
-                              ? speakingMessageIndex === index || voiceLoadingMessageIndex === index
-                                ? 1
-                                : 0.35
-                              : 0.9,
-                          cursor:
-                            isVoiceLoading || isSpeaking
-                              ? "not-allowed"
-                              : "pointer",
-                        }}
-                      >
-                        {isVoiceLoading && voiceLoadingMessageIndex === index
-                          ? "⏳"
-                          : "🔊"}
-                      </button>
-                    </div>
-                  )}
-
-                  <div
-                    className={`px-4 py-3 text-sm leading-6 ${
-                      msg.sender === "elvy"
-                        ? "min-w-0 flex-1 rounded-[22px] bg-white text-[#2b1a12] font-medium shadow-[0_3px_10px_rgba(0,0,0,0.08)]"
-                        : "rounded-[22px] border border-[#7fc2ff] bg-[#cfe9ff] text-[16px] font-bold text-[#11314d] shadow-[0_4px_12px_rgba(80,160,255,0.18)]"
-                    }`}
-                  >
-                    <div>{renderMessageText(msg.text, index)}</div>
-                  </div>
-                </div>
-              ))}
-
-              {isSending && (
-                <div className="mr-auto max-w-[82%] rounded-2xl bg-white/90 px-3 py-2 text-sm font-medium leading-5 text-[#2b1a12] shadow-sm">
-                  Elvy is replying...
-                </div>
-              )}
-
-              {showTicketInfo && (
-                <div className="rounded-2xl bg-[#f7eadb] p-3 text-sm text-[#3b2418]">
-                  <p className="font-semibold">
-                    To continue, please activate an Elvy Ticket.
-                  </p>
-                  {paymentOpen &&
-                  ((paypalActive && paypalLink) ||
-                    (skrillActive && skrillLink)) ? (
-                    <>
-                      <p className="mt-1">Ticket price: $4</p>
-                      <p className="mt-1">Balance: time-based ticket</p>
-                      <p className="mt-1">Validity: until the ticket time is finished</p>
-                      <p className="mt-1">
-                        Voice access will be available later as a separate
-                        ticket.
-                      </p>
-                      <p className="mt-1">
-                        After payment, enter your activation code to unlock
-                        Elvy.
-                      </p>
-
-                      {paypalActive && paypalLink && (
-                        <button
-                          onClick={() => window.open(paypalLink, "_blank")}
-                          className="mt-3 w-full rounded-xl py-2 text-white font-bold shadow-md"
-                          style={{ background: "#0070E0" }}
-                        >
-                          Pay with PayPal
-                        </button>
-                      )}
-
-                      {skrillActive && skrillLink && (
-                        <button
-                          onClick={() => window.open(skrillLink, "_blank")}
-                          className="mt-2 w-full rounded-xl py-2 text-white font-bold shadow-md"
-                          style={{ background: "#862165" }}
-                        >
-                          Pay with Skrill
-                        </button>
-                      )}
-                    </>
-                  ) : (
-                    <div className="mt-3 rounded-xl bg-[#f3e5d7] p-3 text-xs font-medium text-[#5b4332]">
-                      Ticket activation is not available at the moment.
-                      <br />
-                      <br />
-                      If you need help, you can contact Happy Office using your
-                      personal code.
-                    </div>
-                  )}
-
-                  <div className="mt-3 flex gap-2">
-                    <input
-                      type="text"
-                      value={activationCode}
-                      placeholder="Activation code"
-                      onChange={(e) => setActivationCode(e.target.value)}
-                      className="min-w-0 flex-1 rounded-xl border border-[#e2d2bf] bg-white px-3 py-2 text-sm outline-none"
-                    />
-
-                    <button
-                      onClick={activateCode}
-                      className="shrink-0 rounded-xl px-4 py-2 text-sm font-bold text-white transition-all"
-                      style={{
-                        backgroundColor:
-                          activationCode.trim().length > 0
-                            ? "#16a34a"
-                            : "#bfae9d",
-                        opacity: activationCode.trim().length > 0 ? 1 : 0.6,
-                      }}
-                    >
-                      Activate
-                    </button>
-                  </div>
-
-                  {activationMessage && (
-                    <p
-                      className={`mt-2 text-xs font-bold ${
-                        isActivated ? "text-green-700" : "text-red-700"
-                      }`}
-                    >
-                      {activationMessage}
-                    </p>
-                  )}
-                </div>
-              )}
-
-              {isListening && (
-                <div
-                  className="mx-auto rounded-full bg-[#fff8ef] px-4 py-2 text-center text-xs font-bold text-[#118a3b] shadow-sm"
-                  style={{ border: "1px solid rgba(31, 107, 43, 0.25)" }}
-                >
-                  Listening... speak now
-                </div>
-              )}
-
-              <div ref={messagesEndRef} />
-            </div>
-
-            <div
-              className="flex shrink-0 items-center"
-              style={{
-                gap: "10px",
-                paddingTop: "10px",
-                borderTop: "1px solid rgba(226, 196, 156, 0.75)",
-              }}
-            >
               <input
                 ref={inputRef}
                 value={input}
@@ -2001,191 +2134,240 @@ export default function MobileElvyPage() {
                 onKeyDown={(e) => {
                   if (e.key === "Enter") sendMessage();
                 }}
-                type="text"
                 placeholder={
                   ticketRequired
                     ? "Activate an Elvy ticket to continue..."
-                    : isSending
-                      ? "Elvy is replying..."
-                      : isVoiceLoading
-                        ? "Loading voice..."
-                        : isSpeaking
-                          ? "Elvy is speaking..."
-                          : isListening
-                            ? "Listening... speak now"
-                            : "Write..."
+                    : isSpeaking
+                      ? "Elvy is speaking..."
+                      : isListening
+                        ? "Elvy is listening..."
+                        : "Tap the mic or write your answer..."
                 }
-                className="min-w-0 flex-1 bg-white text-[#2b1a12] outline-none placeholder:text-[#9a8d80]"
-                style={{
-                  height: "54px",
-                  borderRadius: "24px",
-                  border: "1px solid rgba(216, 185, 143, 0.75)",
-                  padding: "0 18px",
-                  fontSize: "15px",
-                  fontWeight: 500,
-                  boxShadow: "0 4px 12px rgba(72,45,25,0.08)",
-                }}
+                className="min-w-0 flex-1 bg-transparent px-1 text-[13px] font-medium text-[#222] outline-none placeholder:text-[#888]"
               />
 
               <button
                 type="button"
-                onClick={startVoiceInput}
-                disabled={isListening || interactionLocked}
-                className="flex shrink-0 items-center justify-center rounded-full text-white shadow-md transition-all active:scale-[0.98]"
-                style={{
-                  width: "54px",
-                  height: "54px",
-
-                  backgroundColor: isListening
-                    ? "#dc2626"
-                    : interactionLocked
-                      ? "#9ca3af"
-                      : "#118a3b",
-
-                  border: "1px solid rgba(31,107,43,0.75)",
-                  fontSize: "22px",
-
-                  opacity: interactionLocked ? 0.5 : 1,
-
-                  animation: isListening ? "pulse 1.2s infinite" : "none",
-                }}
-                title="Speak to Elvy"
-              >
-                {isListening ? "🔴" : "🎤"}
-              </button>
-
-              <button
-                type="button"
                 onClick={() => sendMessage()}
-                disabled={interactionLocked}
-                className="shrink-0 rounded-full text-white shadow-md transition-all active:scale-[0.98]"
-                style={{
-                  height: "54px",
-                  minWidth: "72px",
-                  padding: "0 18px",
-                  border: "1px solid #1d7fe2",
-                  backgroundColor: interactionLocked ? "#9fc8ef" : "#1d7fe2",
-                  fontSize: "15px",
-                  fontWeight: 800,
-                  opacity: interactionLocked ? 0.7 : 1,
-                }}
+                disabled={interactionLocked || !input.trim()}
+                className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[#0878df] text-[20px] text-white disabled:bg-[#a8c7e4]"
+                aria-label="Send message"
               >
-                {interactionLocked ? "Wait" : "Send"}
+                ➤
               </button>
             </div>
-            <div className="pt-1 text-center">
-              {!ticketRequired &&
-                !isListening &&
-                !input.trim() &&
-                !isSending && (
-                  <div
-                    className="text-center font-medium"
-                    style={{
-                      color: "#1d7fe2",
-                      fontSize: "9px",
-                      opacity: 0.65,
-                      lineHeight: "12px",
-                    }}
-                  >
-                    Tap 🎤 to speak or type your message
-                  </div>
-                )}
 
-              {lastSecondsUsed > 0 && (
-                <div
-                  className="text-center font-bold"
-                  style={{
-                    color: "#6b5a4c",
-                    fontSize: "8px",
-                    opacity: 0.65,
-                    lineHeight: "11px",
-                  }}
+            {!keyboardOpen && (
+              <div className="mt-2 flex h-9 items-center justify-between rounded-full bg-[#241c13]/95 px-4 text-[10px] text-white shadow-lg">
+                <button
+                  type="button"
+                  onClick={() => setVoiceMode((prev) => !prev)}
+                  className={
+                    voiceMode
+                      ? "font-bold text-green-400"
+                      : "font-bold text-red-300"
+                  }
                 >
-                  Last interaction: {lastSecondsUsed}s
-                </div>
-              )}
+                  ◖ Voice mode {voiceMode ? "ON" : "OFF"}
+                </button>
 
+                <span className="truncate px-2 text-center text-white/90">
+                  {isSpeaking
+                    ? "Elvy is speaking..."
+                    : isVoiceLoading
+                      ? "Preparing Elvy's voice..."
+                      : isListening
+                        ? "Elvy is listening..."
+                        : "Ready"}
+                </span>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const lastIndex = [...messages]
+                      .map((message, index) => ({ message, index }))
+                      .reverse()
+                      .find(({ message }) => message.sender === "elvy");
+                    if (lastIndex)
+                      speakText(lastIndex.message.text, lastIndex.index);
+                  }}
+                  disabled={isSpeaking || isVoiceLoading}
+                  className="shrink-0 font-semibold disabled:opacity-40"
+                >
+                  🔊 Replay
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+          </>
+        )}
+
+        {/* Terms overlay */}
+        {showTerms && (
+          <div className="absolute inset-0 z-[80] grid place-items-center bg-black/35 p-5 backdrop-blur-sm">
+            <div className="max-h-[78%] w-full overflow-y-auto rounded-[28px] bg-white p-5 shadow-2xl">
+              <h2 className="text-xl font-black text-[#2e2118]">
+                Terms of Use
+              </h2>
+              <div className="mt-3 space-y-2 text-[13px] leading-5 text-[#5f5147]">
+                <p>Elvy helps you learn and communicate more clearly.</p>
+                <p>
+                  Do not share passwords, bank details, or sensitive private
+                  information.
+                </p>
+                <p>Please use Elvy respectfully and safely.</p>
+              </div>
+              <label className="mt-4 flex gap-3 rounded-2xl bg-[#f5eadc] p-3 text-[12px] font-semibold text-[#3b2a1f]">
+                <input
+                  type="checkbox"
+                  checked={acceptedTerms}
+                  onChange={(e) => setAcceptedTerms(e.target.checked)}
+                  className="mt-0.5"
+                />
+                <span>I have read and agree to continue using Elvy.</span>
+              </label>
               <button
                 type="button"
-                onClick={() => setVoiceMode((prev) => !prev)}
-                className="mt-1 inline-flex items-center justify-center rounded-full transition-all active:scale-[0.98]"
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  cursor: "pointer",
-                  fontSize: "10px",
-                  fontWeight: 800,
-                  lineHeight: "14px",
-                  padding: "0",
-                }}
-                aria-label={
-                  voiceMode ? "Turn voice mode off" : "Turn voice mode on"
-                }
-                title={voiceMode ? "Voice Mode ON" : "Voice Mode OFF"}
+                onClick={continueToChat}
+                disabled={!acceptedTerms}
+                className="mt-4 w-full rounded-2xl bg-[#0878df] py-3 font-extrabold text-white disabled:bg-[#aeb8c1]"
               >
-                <span
-                  style={{
-                    color: voiceMode ? "#8a7563" : "#dc2626",
-                    opacity: voiceMode ? 0.7 : 1,
+                Continue
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowTerms(false)}
+                className="mt-2 w-full rounded-2xl bg-[#eee5db] py-3 font-bold text-[#4a382b]"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Account overlay */}
+        {showAccountForm && (
+          <div className="absolute inset-0 z-[80] grid place-items-center bg-black/35 p-5 backdrop-blur-sm">
+            <div className="w-full rounded-[28px] bg-white p-5 shadow-2xl">
+              <h2 className="text-xl font-black text-[#1f4f2b]">
+                {accountMode === "register" ? "Create account" : "Log in"}
+              </h2>
+              <div className="mt-4 space-y-3">
+                <input
+                  value={accountUsername}
+                  onChange={(e) => setAccountUsername(e.target.value)}
+                  placeholder="Username"
+                  className="w-full rounded-2xl border border-[#ddd0c1] px-4 py-3 text-sm outline-none"
+                />
+                <input
+                  type="password"
+                  value={accountPassword}
+                  onChange={(e) => setAccountPassword(e.target.value)}
+                  placeholder="Password"
+                  className="w-full rounded-2xl border border-[#ddd0c1] px-4 py-3 text-sm outline-none"
+                />
+                {accountMode === "login" && (
+                  <input
+                    value={studentLoginCode}
+                    onChange={(e) =>
+                      setStudentLoginCode(e.target.value.toUpperCase())
+                    }
+                    placeholder="Student code (optional)"
+                    className="w-full rounded-2xl border border-[#ddd0c1] px-4 py-3 text-sm outline-none"
+                  />
+                )}
+              </div>
+              {accountMessage && (
+                <p className="mt-3 rounded-xl bg-red-50 p-2 text-[12px] font-bold text-red-700">
+                  {accountMessage}
+                </p>
+              )}
+              <button
+                type="button"
+                onClick={submitAccount}
+                className="mt-4 w-full rounded-2xl bg-[#16843a] py-3 font-extrabold text-white"
+              >
+                {accountMode === "register" ? "Create account" : "Log in"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAccountMode(
+                    accountMode === "register" ? "login" : "register",
+                  );
+                  setAccountMessage("");
+                  setStudentLoginCode("");
+                }}
+                className="mt-2 w-full rounded-2xl border border-[#4a382b] py-2 text-[13px] font-bold text-[#4a382b]"
+              >
+                {accountMode === "register"
+                  ? "I already have an account"
+                  : "Create a new account"}
+              </button>
+              {showWelcome && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAccountForm(false);
+                    setAccountMessage("");
+                    setAccountPassword("");
+                    setStudentLoginCode("");
                   }}
+                  className="mt-2 w-full rounded-2xl bg-[#eee5db] py-2 text-[13px] font-bold text-[#4a382b]"
                 >
-                  OFF
-                </span>
-                <span style={{ margin: "0 5px", fontSize: "11px" }}>🔘</span>
-                <span
-                  style={{
-                    color: "#3b2418",
-                    margin: "0 2px",
-                    letterSpacing: "0.2px",
-                  }}
+                  Back
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Ticket overlay */}
+        {chatOpen && showTicketInfo && (
+          <div className="absolute inset-0 z-[90] grid place-items-center bg-black/35 p-5 backdrop-blur-sm">
+            <div className="w-full rounded-[28px] bg-white p-5 shadow-2xl">
+              <h2 className="text-lg font-black text-[#3b2418]">
+                Activate Elvy Ticket
+              </h2>
+              <p className="mt-2 text-[13px] leading-5 text-[#5b4332]">
+                To continue learning, enter your activation code.
+              </p>
+              <div className="mt-4 flex gap-2">
+                <input
+                  value={activationCode}
+                  onChange={(e) => setActivationCode(e.target.value)}
+                  placeholder="Activation code"
+                  className="min-w-0 flex-1 rounded-2xl border border-[#ddd0c1] px-4 py-3 text-sm outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={activateCode}
+                  className="rounded-2xl bg-[#16843a] px-4 text-sm font-extrabold text-white"
                 >
-                  VOICE MODE
-                </span>
-                <span style={{ margin: "0 5px", fontSize: "11px" }}>🔘</span>
-                <span
-                  style={{
-                    color: voiceMode ? "#118a3b" : "#8a7563",
-                    opacity: voiceMode ? 1 : 0.7,
-                  }}
+                  Activate
+                </button>
+              </div>
+              {activationMessage && (
+                <p
+                  className={`mt-3 text-[12px] font-bold ${isActivated ? "text-green-700" : "text-red-700"}`}
                 >
-                  ON
-                </span>
+                  {activationMessage}
+                </p>
+              )}
+              <button
+                type="button"
+                onClick={() => setShowTicketInfo(false)}
+                className="mt-3 w-full rounded-2xl bg-[#eee5db] py-2 font-bold text-[#4a382b]"
+              >
+                Close
               </button>
             </div>
           </div>
         )}
       </div>
 
-      <style jsx>{`
-        @keyframes elvySpeakPulse {
-          0% {
-            transform: translateY(0) scale(1);
-          }
-          50% {
-            transform: translateY(-2px) scale(1.03);
-          }
-          100% {
-            transform: translateY(0) scale(1);
-          }
-        }
-
-        @keyframes elvyWave {
-          0% {
-            opacity: 0.35;
-            transform: scale(0.9);
-          }
-
-          50% {
-            opacity: 1;
-            transform: scale(1.15);
-          }
-
-          100% {
-            opacity: 0.35;
-            transform: scale(0.9);
-          }
-        }
-      `}</style>
     </main>
   );
 }

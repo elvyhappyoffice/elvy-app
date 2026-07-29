@@ -37,6 +37,7 @@ type Student = {
   username: string;
   password: string;
   code: string;
+  nativeLanguage: string;
   level: string;
   sublevel: string;
   unit: string;
@@ -50,24 +51,7 @@ type Student = {
 
 const DEFAULT_TICKET_HOURS = 15;
 
-const initialStudents: Student[] = [
-  {
-    id: "student-1",
-    name: "Ahmed RAM",
-    username: "ahmed021",
-    password: "X7P9K2",
-    code: "STUDENT-A7K9X2",
-    level: "LEVEL A",
-    sublevel: "A1",
-    unit: "Hello",
-    lesson: 1,
-    lessonTitle: "Greetings",
-    status: "Active",
-    passHours: DEFAULT_TICKET_HOURS,
-    secondsRemaining: DEFAULT_TICKET_HOURS * 60 * 60,
-    secondsUsed: 0,
-  },
-];
+const initialStudents: Student[] = [];
 
 function generatePassword() {
   return Math.random().toString(36).slice(2, 8).toUpperCase();
@@ -145,6 +129,9 @@ function normalizeStudent(student: any): Student {
     username: String(student?.username || makeUsername(student?.name || "student")),
     password: String(student?.password || generatePassword()),
     code: String(student?.code || generateStudentCode()),
+    nativeLanguage: String(
+      student?.nativeLanguage || student?.native_language || "Arabic",
+    ),
     level: String(student?.level || ""),
     sublevel: String(student?.sublevel || ""),
     unit: String(student?.unit || ""),
@@ -194,6 +181,20 @@ export default function StudentsDashboard() {
   );
   const [studentsStatus, setStudentsStatus] = useState("Loading students...");
 
+  async function loadStudentsFromServer(statusMessage = "Students loaded.") {
+    const response = await fetch("/api/students", { cache: "no-store" });
+    const data = await response.json();
+
+    if (!response.ok || data?.success === false || !Array.isArray(data?.students)) {
+      throw new Error(data?.message || "Students load request failed.");
+    }
+
+    setStudents(data.students.map(normalizeStudent));
+    setStudentsStatus(statusMessage);
+
+    return data.students as Student[];
+  }
+
   useEffect(() => {
     async function loadCurriculum() {
       try {
@@ -217,24 +218,11 @@ export default function StudentsDashboard() {
   }, []);
 
   useEffect(() => {
-    async function loadStudents() {
-      try {
-        const response = await fetch("/api/students", { cache: "no-store" });
-        const data = await response.json();
-
-        if (data?.success && Array.isArray(data?.students)) {
-          setStudents(data.students.map(normalizeStudent));
-          setStudentsStatus("Students loaded.");
-        } else {
-          setStudentsStatus("Using starter students.");
-        }
-      } catch (error) {
-        console.error("Students load failed:", error);
-        setStudentsStatus("Could not load saved students.");
-      }
-    }
-
-    loadStudents();
+    loadStudentsFromServer().catch((error) => {
+      console.error("Students load failed:", error);
+      setStudents([]);
+      setStudentsStatus("Could not load saved students.");
+    });
   }, []);
 
 
@@ -294,6 +282,14 @@ export default function StudentsDashboard() {
     const name = cleanText(prompt("Student full name, example: Ahmed RAM"));
     if (!name) return;
 
+    const nativeLanguage = cleanText(
+      prompt(
+        "Student native language, example: Arabic, French, Spanish",
+        "Arabic",
+      ),
+    );
+    if (!nativeLanguage) return;
+
     const selectedPath = chooseCurriculumPath();
     if (!selectedPath) return;
 
@@ -303,6 +299,7 @@ export default function StudentsDashboard() {
       username: makeUsername(name),
       password: generatePassword(),
       code: generateStudentCode(),
+      nativeLanguage,
       ...selectedPath,
       status: "Suspended",
       ...createDefaultTicket(),
@@ -315,7 +312,7 @@ export default function StudentsDashboard() {
 
     if (!data) return;
 
-    setStudents((prev) => [...prev, normalizeStudent(data.student || newStudent)]);
+    await loadStudentsFromServer("Student added.");
   }
 
   async function editStudent(id: string) {
@@ -324,6 +321,11 @@ export default function StudentsDashboard() {
 
     const name = cleanText(prompt("Edit student name", student.name));
     if (!name) return;
+
+    const nativeLanguage = cleanText(
+      prompt("Edit student native language", student.nativeLanguage),
+    );
+    if (!nativeLanguage) return;
 
     const changeCurriculum = window.confirm(
       "Do you want to change this student's level / sublevel / unit / lesson?",
@@ -355,6 +357,7 @@ export default function StudentsDashboard() {
     const updatedStudent: Student = {
       ...student,
       name,
+      nativeLanguage,
       ...(selectedPath || {}),
       status: nextStatus,
       ...(shouldUpdateTicket
@@ -373,11 +376,7 @@ export default function StudentsDashboard() {
 
     if (!data) return;
 
-    setStudents((prev) =>
-      prev.map((item) =>
-        item.id === id ? normalizeStudent(data.student || updatedStudent) : item,
-      ),
-    );
+    await loadStudentsFromServer("Student updated.");
   }
 
   async function deleteStudent(id: string) {
@@ -395,7 +394,7 @@ export default function StudentsDashboard() {
 
     if (!data) return;
 
-    setStudents((prev) => prev.filter((item) => item.id !== id));
+    await loadStudentsFromServer("Student deleted.");
   }
 
   function findStudentCurriculumPath(student: Student) {
@@ -488,11 +487,7 @@ export default function StudentsDashboard() {
 
     if (!data) return;
 
-    setStudents((prev) =>
-      prev.map((item) =>
-        item.id === id ? normalizeStudent(data.student || updatedStudent) : item,
-      ),
-    );
+    await loadStudentsFromServer("Student updated.");
   }
 
   async function markWaitingApproval(id: string) {
@@ -511,11 +506,7 @@ export default function StudentsDashboard() {
 
     if (!data) return;
 
-    setStudents((prev) =>
-      prev.map((item) =>
-        item.id === id ? normalizeStudent(data.student || updatedStudent) : item,
-      ),
-    );
+    await loadStudentsFromServer("Student updated.");
   }
 
   return (
@@ -575,13 +566,14 @@ export default function StudentsDashboard() {
         </div>
 
         <section className="overflow-x-auto rounded-3xl bg-white p-4 shadow">
-          <table className="w-full min-w-[1250px] border-collapse text-left text-sm">
+          <table className="w-full min-w-[1380px] border-collapse text-left text-sm">
             <thead>
               <tr className="border-b border-[#ead8c0] text-[#6b5a4c]">
                 <th className="p-3">Name</th>
                 <th className="p-3">Username</th>
                 <th className="p-3">Password</th>
                 <th className="p-3">Code</th>
+                <th className="p-3">Native Language</th>
                 <th className="p-3">Level</th>
                 <th className="p-3">Sublevel</th>
                 <th className="p-3">Unit</th>
@@ -604,6 +596,7 @@ export default function StudentsDashboard() {
                     <td className="p-3 font-mono text-[#1d7fe2]">
                       {student.code}
                     </td>
+                    <td className="p-3">{student.nativeLanguage}</td>
                     <td className="p-3">{student.level}</td>
                     <td className="p-3">{student.sublevel}</td>
                     <td className="p-3">{student.unit}</td>

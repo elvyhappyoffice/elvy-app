@@ -1,0 +1,149 @@
+.root {
+  position: relative;
+  width: min(100%, 560px);
+  aspect-ratio: 1024 / 1536;
+  overflow: visible;
+  line-height: 0;
+  isolation: isolate;
+}
+
+.part {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
+  transform-origin: center;
+}
+
+/* Central, fixed character group: envelope head + suit + tie + bag. */
+.central { z-index: 30; }
+.leftLeg { z-index: 10; }
+.leftShoe { z-index: 11; }
+.rightLeg { z-index: 10; }
+.rightShoe { z-index: 11; }
+
+/*
+ * Locked arm hierarchy. Every layer keeps the canonical 1024 x 1536 canvas.
+ * Angles remain 0deg during anchor validation, so the neutral pose is unchanged.
+ */
+.jointLayer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  transform: rotate(var(--joint-angle, 0deg));
+  transition: transform 160ms ease-out;
+}
+
+.leftShoulder {
+  z-index: 20;
+  --joint-angle: 0deg;
+  transform-origin: 31.15% 31.05%; /* 319, 477 */
+}
+
+.leftElbow {
+  --joint-angle: 0deg;
+  transform-origin: 25% 41.67%; /* 256, 640 */
+}
+
+.leftWrist {
+  --joint-angle: 0deg;
+  transform-origin: 21.09% 49.48%; /* 216, 760 */
+}
+
+.rightShoulder {
+  z-index: 20;
+  --joint-angle: 0deg;
+  transform-origin: 68.75% 31.05%; /* 704, 477 */
+}
+
+.rightElbow {
+  --joint-angle: 0deg;
+  transform-origin: 75% 41.67%; /* 768, 640 */
+}
+
+.rightWrist {
+  --joint-angle: 0deg;
+  transform-origin: 79.69% 49.48%; /* 816, 760 */
+}
+
+.upperArm { z-index: 1; }
+.forearm { z-index: 2; }
+.hand { z-index: 3; }
+
+/* V1 automatic states: face layers are controlled by React; shoulders stay within ±11°. */
+.root[data-animation-state="idle"] .leftShoulder {
+  animation: leftShoulderIdle 3.2s ease-in-out infinite;
+}
+
+.root[data-animation-state="idle"] .rightShoulder {
+  animation: rightShoulderIdle 3.2s ease-in-out infinite;
+}
+
+.root[data-animation-state="speaking"] .leftShoulder {
+  animation: leftShoulderSpeaking 1.1s ease-in-out infinite;
+}
+
+.root[data-animation-state="speaking"] .rightShoulder {
+  animation: rightShoulderSpeaking 1.1s ease-in-out infinite;
+}
+
+.root[data-animation-state="listening"] .leftShoulder {
+  animation: leftShoulderListening 1ms linear both;
+}
+
+.root[data-animation-state="listening"] .rightShoulder {
+  animation: rightShoulderListening 1ms linear both;
+}
+
+@keyframes leftShoulderIdle {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(2deg); }
+}
+
+@keyframes rightShoulderIdle {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(-2deg); }
+}
+
+@keyframes leftShoulderSpeaking {
+  0%, 100% { transform: rotate(0deg); }
+  35% { transform: rotate(4deg); }
+  70% { transform: rotate(1deg); }
+}
+
+@keyframes rightShoulderSpeaking {
+  0%, 100% { transform: rotate(0deg); }
+  35% { transform: rotate(-2deg); }
+  70% { transform: rotate(-4deg); }
+}
+
+@keyframes leftShoulderListening {
+  to { transform: rotate(-2deg); }
+}
+
+@keyframes rightShoulderListening {
+  to { transform: rotate(2deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .root .jointLayer {
+    animation: none !important;
+    transition: none;
+  }
+}
+
+/* Face anchors. Mouth width never exceeds the standalone mouth footprint. */
+.leftEye, .rightEye { z-index: 40; }
+.leftEyelid, .rightEyelid { z-index: 41; }
+.leftEyebrow, .rightEyebrow, .mouth { z-index: 42; }
+
+@media (max-width: 640px) {
+  .root { width: min(100%, 430px); }
+}

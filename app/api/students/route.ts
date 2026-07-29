@@ -8,6 +8,19 @@ export const runtime = "nodejs";
 const filePath = path.join(process.cwd(), "data", "students.json");
 const STUDENTS_TABLE = "language_center_students";
 
+function hasSupabaseConfig() {
+  const hasUrl = Boolean(
+    process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL,
+  );
+  const hasKey = Boolean(
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+      process.env.SUPABASE_ANON_KEY,
+  );
+
+  return hasUrl && hasKey;
+}
+
 async function readStudentsFile() {
   try {
     const file = await fs.readFile(filePath, "utf8");
@@ -60,6 +73,9 @@ function normalizeStudent(student: any) {
     username: String(student?.username || ""),
     password: String(student?.password || ""),
     code: cleanCode(student?.code),
+    nativeLanguage: String(
+      student?.nativeLanguage || student?.native_language || "Arabic",
+    ),
     level: String(student?.level || ""),
     sublevel: String(student?.sublevel || ""),
     unit: String(student?.unit || ""),
@@ -86,6 +102,7 @@ function mapSupabaseStudent(row: any) {
     username: row.username,
     password: row.password,
     code: row.code,
+    nativeLanguage: row.native_language,
     level: row.level,
     sublevel: row.sublevel,
     unit: row.unit,
@@ -109,6 +126,7 @@ function mapStudentToSupabase(student: any) {
     username: normalized.username,
     password: normalized.password,
     code: normalized.code,
+    native_language: normalized.nativeLanguage,
     level: normalized.level,
     sublevel: normalized.sublevel,
     unit: normalized.unit,
@@ -124,7 +142,7 @@ function mapStudentToSupabase(student: any) {
 }
 
 async function readStudents() {
-  if (!process.env.VERCEL) {
+  if (!hasSupabaseConfig()) {
     return readStudentsFile();
   }
 
@@ -144,7 +162,7 @@ async function readStudents() {
 async function addOrUpdateStudent(student: any) {
   const normalizedStudent = normalizeStudent(student);
 
-  if (!process.env.VERCEL) {
+  if (!hasSupabaseConfig()) {
     const students = await readStudentsFile();
 
     const exists = students.some(
@@ -184,7 +202,7 @@ async function deleteStudentByIdOrCode(id: string, code: string) {
     throw new Error("Student ID or code is required.");
   }
 
-  if (!process.env.VERCEL) {
+  if (!hasSupabaseConfig()) {
     const students = await readStudentsFile();
 
     const nextStudents = students.filter((student: any) => {
@@ -222,7 +240,7 @@ async function deleteStudentByIdOrCode(id: string, code: string) {
 async function upsertStudents(students: any[]) {
   const normalizedStudents = students.map(normalizeStudent);
 
-  if (!process.env.VERCEL) {
+  if (!hasSupabaseConfig()) {
     await saveStudentsFile(normalizedStudents);
     return normalizedStudents;
   }
@@ -264,7 +282,7 @@ async function syncOneStudentTicket(body: any) {
     };
   }
 
-  if (!process.env.VERCEL) {
+  if (!hasSupabaseConfig()) {
     const students = await readStudentsFile();
     let updatedStudent: any = null;
 
