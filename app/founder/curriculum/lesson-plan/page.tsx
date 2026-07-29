@@ -2,10 +2,24 @@
 
 import { Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import {
-  ReadyPackageAssetStorage,
-  type StoredReadyPackageAsset,
-} from "../../../../services/ready-package/ready-package-asset-storage";
+type TeachingAssetMetadata = {
+  type: string;
+  file: string;
+  title?: string;
+  purpose?: string;
+  altText?: string;
+  stage?: string;
+  keywords?: string[];
+};
+
+type CloudTeachingAsset = {
+  key: string;
+  assetId: string;
+  lessonId?: string;
+  metadata: TeachingAssetMetadata;
+  blob?: Blob;
+  url?: string;
+};
 
 type LessonStatus = "Draft" | "Generated" | "Reviewed" | "Approved" | "Ready for Elvy";
 
@@ -440,6 +454,7 @@ type CloudLessonContext = {
     elvyBlueprint?: unknown[];
     teachingAssets?: unknown[];
   };
+  teachingAssets?: unknown[];
 };
 
 function stringValue(value: unknown, fallback = ""): string {
@@ -513,6 +528,55 @@ function normalizeBlueprint(value: unknown): ElvyBlueprintStage[] {
       transition: stringValue(item.transition),
       instructions: stringValue(item.instructions) || undefined,
     }));
+}
+
+function normalizeTeachingAssets(value: unknown): CloudTeachingAsset[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .filter((item): item is Record<string, unknown> =>
+      Boolean(item) && typeof item === "object",
+    )
+    .map((item, index) => {
+      const metadataSource =
+        item.metadata && typeof item.metadata === "object"
+          ? (item.metadata as Record<string, unknown>)
+          : item;
+
+      const assetId =
+        stringValue(item.assetId) ||
+        stringValue(item.id) ||
+        stringValue(metadataSource.assetId) ||
+        `teaching-asset-${index + 1}`;
+
+      const file =
+        stringValue(metadataSource.file) ||
+        stringValue(item.file) ||
+        stringValue(item.path);
+
+      const url =
+        stringValue(item.url) ||
+        stringValue(item.publicUrl) ||
+        stringValue(item.storageUrl) ||
+        stringValue(metadataSource.url) ||
+        stringValue(metadataSource.publicUrl);
+
+      return {
+        key: stringValue(item.key, assetId),
+        assetId,
+        lessonId: stringValue(item.lessonId) || undefined,
+        metadata: {
+          type: stringValue(metadataSource.type, "resource"),
+          file,
+          title: stringValue(metadataSource.title) || undefined,
+          purpose: stringValue(metadataSource.purpose) || undefined,
+          altText: stringValue(metadataSource.altText) || undefined,
+          stage: stringValue(metadataSource.stage) || undefined,
+          keywords: stringArrayValue(metadataSource.keywords),
+        },
+        url: url || undefined,
+      };
+    });
 }
 
 function normalizeCloudLessonPlan(
@@ -654,7 +718,7 @@ function LessonPlanPageContent() {
     "Loading curriculum units...",
   );
   const [teachingAssets, setTeachingAssets] = useState<
-    StoredReadyPackageAsset[]
+    CloudTeachingAsset[]
   >([]);
   const [teachingAssetUrls, setTeachingAssetUrls] = useState<
     Record<string, string>
@@ -716,7 +780,13 @@ function LessonPlanPageContent() {
 
         const response = await fetch(
           `/api/elvy-packages?${params.toString()}`,
-          { cache: "no-store" },
+          {
+            cache: "no-store",
+            headers: {
+              "Cache-Control": "no-cache",
+              Pragma: "no-cache",
+            },
+          },
         );
         const data = await response.json();
 
@@ -734,6 +804,26 @@ function LessonPlanPageContent() {
 
         setPlan(cloudPlan);
         setActiveSyllabusTitle(context.packageTitle || "");
+
+        const cloudAssets = normalizeTeachingAssets(
+          context.teachingAssets || context.lesson?.teachingAssets,
+        );
+        const cloudAssetUrls = cloudAssets.reduce<Record<string, string>>(
+          (urls, asset) => {
+            if (asset.url) urls[asset.assetId] = asset.url;
+            return urls;
+          },
+          {},
+        );
+        setTeachingAssets(cloudAssets);
+        setTeachingAssetUrls(cloudAssetUrls);
+        setTeachingAssetsStatus(
+          cloudAssets.length
+            ? `${cloudAssets.length} teaching asset${
+                cloudAssets.length === 1 ? "" : "s"
+              } loaded from Elvy Cloud.`
+            : "No teaching assets are linked to this lesson in Elvy Cloud.",
+        );
 
         if (context.syllabusId) {
           setActiveSyllabusId(context.syllabusId);
@@ -924,64 +1014,8 @@ function LessonPlanPageContent() {
     };
   }, [activeSyllabusId, lessonId]);
 
-  useEffect(() => {
-    let cancelled = false;
-    const createdUrls: string[] = [];
-
-    async function loadTeachingAssets() {
-      setTeachingAssets([]);
-      setTeachingAssetUrls({});
-      setTeachingAssetsStatus("Loading teaching assets...");
-
-      if (!lessonId || lessonId === "starter-lesson") {
-        setTeachingAssetsStatus("No teaching assets are linked to this lesson.");
-        return;
-      }
-
-      try {
-        const assets =
-          await ReadyPackageAssetStorage.getLessonAssets(lessonId);
-
-        if (cancelled) return;
-
-        const urls: Record<string, string> = {};
-
-        for (const asset of assets) {
-          if (asset.blob) {
-            const objectUrl = URL.createObjectURL(asset.blob);
-            createdUrls.push(objectUrl);
-            urls[asset.assetId] = objectUrl;
-          }
-        }
-
-        setTeachingAssets(assets);
-        setTeachingAssetUrls(urls);
-        setTeachingAssetsStatus(
-          assets.length
-            ? `${assets.length} teaching asset${
-                assets.length === 1 ? "" : "s"
-              } available for this lesson.`
-            : "No teaching assets are linked to this lesson.",
-        );
-      } catch (error) {
-        console.error("Could not load teaching assets:", error);
-        if (!cancelled) {
-          setTeachingAssets([]);
-          setTeachingAssetUrls({});
-          setTeachingAssetsStatus(
-            "Teaching assets could not be loaded from local storage.",
-          );
-        }
-      }
-    }
-
-    void loadTeachingAssets();
-
-    return () => {
-      cancelled = true;
-      createdUrls.forEach((url) => URL.revokeObjectURL(url));
-    };
-  }, [lessonId]);
+  // Teaching assets are loaded with the lesson from Elvy Cloud.
+  // Browser-local IndexedDB/localStorage must never determine lesson completion.
 
   const fileName = useMemo(() => {
     return `${plan.lessonNumber} - ${plan.lessonTitle} Lesson Plan`.replace(/[\\/:*?"<>|]/g, "");
@@ -1064,12 +1098,9 @@ function LessonPlanPageContent() {
   }
 
   function savePlan() {
-    try {
-      window.localStorage.setItem(`elvy-lesson-plan-${lessonId}`, JSON.stringify(plan));
-      setSaveStatus("Saved locally");
-    } catch {
-      setSaveStatus("Save failed");
-    }
+    setSaveStatus(
+      "Lesson content is loaded from Elvy Cloud. Browser-local lesson copies are disabled.",
+    );
   }
 
   function openLessonFromNavigator(nextLessonId: string) {
@@ -1994,18 +2025,18 @@ function LessonPlanPageContent() {
     URL.revokeObjectURL(url);
   }
 
-  function openTeachingAsset(asset: StoredReadyPackageAsset) {
+  function openTeachingAsset(asset: CloudTeachingAsset) {
     const url = teachingAssetUrls[asset.assetId];
     if (!url) return;
     window.open(url, "_blank", "noopener,noreferrer");
   }
 
-  function downloadTeachingAsset(asset: StoredReadyPackageAsset) {
+  function downloadTeachingAsset(asset: CloudTeachingAsset) {
     const url = teachingAssetUrls[asset.assetId];
     if (!url) return;
 
     const extension =
-      asset.metadata.file.split(".").pop()?.toLowerCase() || "bin";
+      (asset.metadata.file || "").split(".").pop()?.toLowerCase() || "bin";
     const safeTitle = (
       asset.metadata.title ||
       asset.assetId ||
@@ -2027,13 +2058,13 @@ function LessonPlanPageContent() {
       .join(" ");
   }
 
-  function isPreviewableImage(asset: StoredReadyPackageAsset) {
+  function isPreviewableImage(asset: CloudTeachingAsset) {
     return (
       asset.metadata.type === "image" ||
       asset.metadata.type === "flashcard" ||
       asset.metadata.type === "grammar-chart" ||
       asset.metadata.type === "speaking-prompt" ||
-      asset.blob.type.startsWith("image/")
+      asset.blob?.type.startsWith("image/") === true
     );
   }
 
