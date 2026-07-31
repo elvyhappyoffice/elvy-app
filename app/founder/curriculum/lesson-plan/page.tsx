@@ -40,6 +40,30 @@ type IntegratedSkillRow = {
   elvyStrategy: string;
 };
 
+type JsonRecord = Record<string, unknown>;
+
+type ElvyBlueprintObjective = {
+  id: string;
+  description: string;
+  evidence: string;
+};
+
+type ElvyBlueprintScene = {
+  sceneId: string;
+  title: string;
+  purpose: string;
+  objectiveIds: string[];
+  activityIds: string[];
+  entryCondition: string;
+  completionCondition: string;
+  nextSceneId?: string;
+  recoverySceneId?: string;
+  whiteboard?: JsonRecord;
+  teacherTurns: JsonRecord[];
+  activities: JsonRecord[];
+  assetIds: string[];
+};
+
 type ElvyBlueprintStage = {
   stage: string;
   duration: string;
@@ -56,8 +80,25 @@ type ElvyBlueprintStage = {
   successAction: string;
   recoveryAction: string;
   transition: string;
+
+  /** Executable Blueprint v1.4 fields. */
+  stageId?: string;
+  objectiveIds: string[];
+  scenes: ElvyBlueprintScene[];
+  stageCompletionRule?: JsonRecord;
+
   /** Legacy field kept so older locally saved lesson plans still open. */
   instructions?: string;
+};
+
+type ElvyBlueprintMetadata = {
+  id?: string;
+  lessonId?: string;
+  objectives: ElvyBlueprintObjective[];
+  nativeLanguageSupport?: JsonRecord;
+  adaptation?: JsonRecord;
+  lessonCompletionRule?: JsonRecord;
+  teachingRules?: JsonRecord;
 };
 
 type LessonPlan = {
@@ -121,6 +162,7 @@ type LessonPlan = {
   teacherNotes: string;
 
   elvyBlueprint: ElvyBlueprintStage[];
+  elvyBlueprintMetadata: ElvyBlueprintMetadata;
 
   generatedBy: string;
   generationDate: string;
@@ -336,6 +378,8 @@ const starterPlan: LessonPlan = {
       successAction: "Continue to the presentation stage.",
       recoveryAction: "Model the greeting again and let the learner choose between Hello and Hi.",
       transition: "Now let us learn how to introduce ourselves.",
+      objectiveIds: [],
+      scenes: [],
     },
     {
       stage: "Presentation",
@@ -353,6 +397,8 @@ const starterPlan: LessonPlan = {
       successAction: "Move to guided practice.",
       recoveryAction: "Reduce the model to shorter chunks and rebuild the full expression.",
       transition: "Let us practise the dialogue together.",
+      objectiveIds: [],
+      scenes: [],
     },
     {
       stage: "Practice",
@@ -370,6 +416,8 @@ const starterPlan: LessonPlan = {
       successAction: "Advance to independent production.",
       recoveryAction: "Return to one guided exchange before trying again.",
       transition: "Now try the conversation with less help.",
+      objectiveIds: [],
+      scenes: [],
     },
     {
       stage: "Production",
@@ -387,6 +435,8 @@ const starterPlan: LessonPlan = {
       successAction: "Proceed to assessment.",
       recoveryAction: "Repeat the production task with a visual sequence prompt.",
       transition: "Let us check what you can do by yourself.",
+      objectiveIds: [],
+      scenes: [],
     },
     {
       stage: "Assessment",
@@ -404,6 +454,8 @@ const starterPlan: LessonPlan = {
       successAction: "Mark the lesson objective as achieved and assign homework.",
       recoveryAction: "Return to the weakest expression for a short focused practice.",
       transition: "You are ready for a short follow-up task.",
+      objectiveIds: [],
+      scenes: [],
     },
     {
       stage: "Homework",
@@ -421,8 +473,13 @@ const starterPlan: LessonPlan = {
       successAction: "Close the lesson positively.",
       recoveryAction: "Restate the homework using simpler language.",
       transition: "End the lesson and save progress.",
+      objectiveIds: [],
+      scenes: [],
     },
   ],
+  elvyBlueprintMetadata: {
+    objectives: [],
+  },
 
   generatedBy: "Manual starter plan / Curriculum Reader later",
   generationDate: new Date().toISOString().slice(0, 10),
@@ -452,6 +509,7 @@ type CloudLessonContext = {
     lessonPlanData?: Record<string, unknown>;
     blueprintData?: Record<string, unknown>;
     elvyBlueprint?: unknown[];
+    blueprintId?: string;
     teachingAssets?: unknown[];
   };
   teachingAssets?: unknown[];
@@ -500,6 +558,64 @@ function normalizeStages(value: unknown): LessonPlanStage[] {
     }));
 }
 
+function recordValue(value: unknown): JsonRecord | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as JsonRecord)
+    : undefined;
+}
+
+function recordArrayValue(value: unknown): JsonRecord[] {
+  return Array.isArray(value)
+    ? value.filter(
+        (item): item is JsonRecord =>
+          Boolean(item) && typeof item === "object" && !Array.isArray(item),
+      )
+    : [];
+}
+
+function normalizeBlueprintScene(value: unknown): ElvyBlueprintScene | null {
+  const item = recordValue(value);
+  if (!item) return null;
+
+  return {
+    sceneId: stringValue(item.sceneId),
+    title: stringValue(item.title),
+    purpose: stringValue(item.purpose),
+    objectiveIds: stringArrayValue(item.objectiveIds),
+    activityIds: stringArrayValue(item.activityIds),
+    entryCondition: stringValue(item.entryCondition),
+    completionCondition: stringValue(item.completionCondition),
+    nextSceneId: stringValue(item.nextSceneId) || undefined,
+    recoverySceneId: stringValue(item.recoverySceneId) || undefined,
+    whiteboard: recordValue(item.whiteboard),
+    teacherTurns: recordArrayValue(item.teacherTurns),
+    activities: recordArrayValue(item.activities),
+    assetIds: stringArrayValue(item.assetIds),
+  };
+}
+
+function normalizeBlueprintMetadata(
+  value: unknown,
+  fallbackLessonId = "",
+): ElvyBlueprintMetadata {
+  const item = recordValue(value) || {};
+  const objectives = recordArrayValue(item.objectives).map((objective) => ({
+    id: stringValue(objective.id),
+    description: stringValue(objective.description),
+    evidence: stringValue(objective.evidence),
+  }));
+
+  return {
+    id: stringValue(item.id) || undefined,
+    lessonId: stringValue(item.lessonId, fallbackLessonId) || undefined,
+    objectives,
+    nativeLanguageSupport: recordValue(item.nativeLanguageSupport),
+    adaptation: recordValue(item.adaptation),
+    lessonCompletionRule: recordValue(item.lessonCompletionRule),
+    teachingRules: recordValue(item.teachingRules),
+  };
+}
+
 function normalizeBlueprint(value: unknown): ElvyBlueprintStage[] {
   if (!Array.isArray(value)) return [];
 
@@ -526,6 +642,14 @@ function normalizeBlueprint(value: unknown): ElvyBlueprintStage[] {
       successAction: stringValue(item.successAction),
       recoveryAction: stringValue(item.recoveryAction),
       transition: stringValue(item.transition),
+      stageId: stringValue(item.stageId) || undefined,
+      objectiveIds: stringArrayValue(item.objectiveIds),
+      scenes: Array.isArray(item.scenes)
+        ? item.scenes
+            .map(normalizeBlueprintScene)
+            .filter((scene): scene is ElvyBlueprintScene => scene !== null)
+        : [],
+      stageCompletionRule: recordValue(item.stageCompletionRule),
       instructions: stringValue(item.instructions) || undefined,
     }));
 }
@@ -596,6 +720,10 @@ function normalizeCloudLessonPlan(
     typeof lesson.blueprintData === "object"
       ? lesson.blueprintData.stages
       : [],
+  );
+  const blueprintMetadata = normalizeBlueprintMetadata(
+    lesson.blueprintData,
+    lesson.id || "",
   );
 
   return {
@@ -680,6 +808,7 @@ function normalizeCloudLessonPlan(
         : blueprintFromCloud.length > 0
           ? blueprintFromCloud
           : blueprintFromData,
+    elvyBlueprintMetadata: blueprintMetadata,
 
     generatedBy: stringValue(raw.generatedBy, "Elvy GSRP"),
     generationDate: stringValue(raw.generationDate),
@@ -691,6 +820,67 @@ function normalizeCloudLessonPlan(
     teacherApproved: stringValue(raw.teacherApproved, "No"),
     readyForElvy: stringValue(raw.readyForElvy, "No"),
   };
+}
+
+function JsonTextCard({
+  title,
+  value,
+}: {
+  title: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+      <p className="text-[11px] font-black uppercase tracking-wide text-slate-500">
+        {title}
+      </p>
+      <p className="mt-1 whitespace-pre-wrap text-sm font-semibold leading-6 text-slate-800">
+        {value || "Not provided"}
+      </p>
+    </div>
+  );
+}
+
+function JsonDetailCard({
+  title,
+  value,
+}: {
+  title: string;
+  value: unknown;
+}) {
+  const hasValue =
+    value !== undefined &&
+    value !== null &&
+    (!Array.isArray(value) || value.length > 0) &&
+    (typeof value !== "object" ||
+      Array.isArray(value) ||
+      Object.keys(value as JsonRecord).length > 0);
+
+  return (
+    <details className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+      <summary className="cursor-pointer list-none px-4 py-3">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-sm font-black text-slate-800">{title}</span>
+          <span className={`rounded-full px-2.5 py-1 text-[11px] font-black ${
+            hasValue
+              ? "bg-emerald-100 text-emerald-700"
+              : "bg-slate-200 text-slate-500"
+          }`}>
+            {hasValue
+              ? Array.isArray(value)
+                ? `${value.length} item${value.length === 1 ? "" : "s"}`
+                : "Available"
+              : "Not provided"}
+          </span>
+        </div>
+      </summary>
+      {hasValue ? (
+        <pre className="max-h-[480px] overflow-auto whitespace-pre-wrap border-t border-slate-200 bg-white p-4 text-xs font-semibold leading-5 text-slate-700">
+          {JSON.stringify(value, null, 2)}
+        </pre>
+      ) : null}
+    </details>
+  );
 }
 
 function LessonPlanPageContent() {
@@ -1167,6 +1357,27 @@ function LessonPlanPageContent() {
       .split(/\r?\n|•/)
       .map((item) => item.trim())
       .filter(Boolean);
+  }
+
+  function prettyJson(value: unknown) {
+    if (value === undefined || value === null) return "";
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return String(value);
+    }
+  }
+
+  function jsonSummary(value: unknown) {
+    if (Array.isArray(value)) return `${value.length} item${value.length === 1 ? "" : "s"}`;
+    if (value && typeof value === "object") return `${Object.keys(value as JsonRecord).length} field${Object.keys(value as JsonRecord).length === 1 ? "" : "s"}`;
+    return String(value || "");
+  }
+
+  function renderJsonBlock(value: unknown) {
+    const content = prettyJson(value);
+    if (!content) return "";
+    return `<pre class="json-block">${escapeHtml(content)}</pre>`;
   }
 
   function renderPrintableLessonPlanHtml() {
@@ -1873,12 +2084,38 @@ function LessonPlanPageContent() {
 
   function renderElvyBlueprintHtml() {
     const blueprintRows = plan.elvyBlueprint
-      .map(
-        (stage) => `
+      .map((stage) => {
+        const scenesHtml = stage.scenes
+          .map(
+            (scene) => `
+              <div class="scene">
+                <h4>${escapeHtml(scene.title || scene.sceneId || "Scene")}</h4>
+                <p><strong>Scene ID:</strong> ${escapeHtml(scene.sceneId)}</p>
+                <p><strong>Purpose:</strong> ${escapeHtml(scene.purpose)}</p>
+                <p><strong>Objective IDs:</strong> ${escapeHtml(blueprintText(scene.objectiveIds))}</p>
+                <p><strong>Entry condition:</strong> ${escapeHtml(scene.entryCondition)}</p>
+                <p><strong>Completion condition:</strong> ${escapeHtml(scene.completionCondition)}</p>
+                <p><strong>Next scene:</strong> ${escapeHtml(scene.nextSceneId || "")}</p>
+                <p><strong>Recovery scene:</strong> ${escapeHtml(scene.recoverySceneId || "")}</p>
+                <p><strong>Whiteboard:</strong></p>
+                ${renderJsonBlock(scene.whiteboard)}
+                <p><strong>Teacher turns:</strong></p>
+                ${renderJsonBlock(scene.teacherTurns)}
+                <p><strong>Learner activities:</strong></p>
+                ${renderJsonBlock(scene.activities)}
+                <p><strong>Asset IDs:</strong> ${escapeHtml(blueprintText(scene.assetIds))}</p>
+              </div>
+            `,
+          )
+          .join("");
+
+        return `
           <tr>
             <td>${escapeHtml(stage.stage)}</td>
             <td>${escapeHtml(stage.duration)}</td>
             <td>
+              <p><strong>Stage ID:</strong> ${escapeHtml(stage.stageId || "")}</p>
+              <p><strong>Objective IDs:</strong> ${escapeHtml(blueprintText(stage.objectiveIds))}</p>
               <p><strong>Teaching objective:</strong> ${escapeHtml(stage.teachingObjective)}</p>
               <p><strong>Whiteboard plan:</strong> ${escapeHtml(blueprintText(stage.whiteboardPlan))}</p>
               <p><strong>Elvy script:</strong> ${escapeHtml(stage.elvyScript || stage.instructions || "")}</p>
@@ -1892,10 +2129,13 @@ function LessonPlanPageContent() {
               <p><strong>On success:</strong> ${escapeHtml(stage.successAction)}</p>
               <p><strong>Recovery:</strong> ${escapeHtml(stage.recoveryAction)}</p>
               <p><strong>Transition:</strong> ${escapeHtml(stage.transition)}</p>
+              <p><strong>Stage completion rule:</strong></p>
+              ${renderJsonBlock(stage.stageCompletionRule)}
+              <div class="scene-list">${scenesHtml}</div>
             </td>
           </tr>
-        `,
-      )
+        `;
+      })
       .join("");
 
     return `<!DOCTYPE html>
@@ -1973,6 +2213,27 @@ function LessonPlanPageContent() {
       background: #faf5ff;
       font-weight: 800;
     }
+    .scene {
+      margin-top: 10px;
+      border: 1px solid #c4b5fd;
+      background: #faf5ff;
+      padding: 8px;
+      page-break-inside: avoid;
+    }
+    .scene h4 {
+      margin: 0 0 6px;
+      color: #5b21b6;
+    }
+    .json-block {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      border: 1px solid #ddd6fe;
+      background: #ffffff;
+      padding: 7px;
+      font-family: Consolas, Monaco, monospace;
+      font-size: 8.5pt;
+      line-height: 1.25;
+    }
   </style>
 </head>
 <body>
@@ -1994,6 +2255,17 @@ function LessonPlanPageContent() {
       <tr><td>CEFR Level</td><td>${escapeHtml(plan.cefrLevel)}</td></tr>
       <tr><td>Source Book</td><td>${escapeHtml(plan.sourceBook)}</td></tr>
       <tr><td>Ready for Elvy</td><td>${escapeHtml(plan.readyForElvy)}</td></tr>
+    </table>
+
+    <div class="section-title">Executable Blueprint Metadata</div>
+    <table class="metadata">
+      <tr><td>Blueprint ID</td><td>${escapeHtml(plan.elvyBlueprintMetadata.id || "")}</td></tr>
+      <tr><td>Lesson ID</td><td>${escapeHtml(plan.elvyBlueprintMetadata.lessonId || "")}</td></tr>
+      <tr><td>Objectives</td><td>${renderJsonBlock(plan.elvyBlueprintMetadata.objectives)}</td></tr>
+      <tr><td>Native-language Support</td><td>${renderJsonBlock(plan.elvyBlueprintMetadata.nativeLanguageSupport)}</td></tr>
+      <tr><td>Adaptation</td><td>${renderJsonBlock(plan.elvyBlueprintMetadata.adaptation)}</td></tr>
+      <tr><td>Lesson Completion Rule</td><td>${renderJsonBlock(plan.elvyBlueprintMetadata.lessonCompletionRule)}</td></tr>
+      <tr><td>Teaching Rules</td><td>${renderJsonBlock(plan.elvyBlueprintMetadata.teachingRules)}</td></tr>
     </table>
 
     <div class="section-title">Internal Teaching Instructions</div>
@@ -2128,8 +2400,8 @@ function LessonPlanPageContent() {
       0,
     );
 
-    const blueprintFieldCount = plan.elvyBlueprint.length * 15;
-    const completedBlueprintFields = plan.elvyBlueprint.reduce(
+    const blueprintCompatibilityFieldCount = plan.elvyBlueprint.length * 15;
+    const completedBlueprintCompatibilityFields = plan.elvyBlueprint.reduce(
       (total, stage) =>
         total +
         [
@@ -2153,6 +2425,38 @@ function LessonPlanPageContent() {
         ).length,
       0,
     );
+
+    const executableBlueprintFieldCount =
+      plan.elvyBlueprint.length * 4 + 5;
+    const completedExecutableBlueprintFields =
+      plan.elvyBlueprint.reduce(
+        (total, stage) =>
+          total +
+          [
+            stage.stageId,
+            stage.objectiveIds,
+            stage.scenes,
+            stage.stageCompletionRule,
+          ].filter((value) =>
+            Array.isArray(value) ? value.length > 0 : hasContent(value),
+          ).length,
+        0,
+      ) +
+      [
+        plan.elvyBlueprintMetadata.objectives,
+        plan.elvyBlueprintMetadata.nativeLanguageSupport,
+        plan.elvyBlueprintMetadata.adaptation,
+        plan.elvyBlueprintMetadata.lessonCompletionRule,
+        plan.elvyBlueprintMetadata.teachingRules,
+      ].filter((value) =>
+        Array.isArray(value) ? value.length > 0 : hasContent(value),
+      ).length;
+
+    const blueprintFieldCount =
+      blueprintCompatibilityFieldCount + executableBlueprintFieldCount;
+    const completedBlueprintFields =
+      completedBlueprintCompatibilityFields +
+      completedExecutableBlueprintFields;
 
     const result = {
       "lesson-information": textFieldsState([
@@ -2815,6 +3119,44 @@ function LessonPlanPageContent() {
         return (
           <ContentPanel>
             <div className="space-y-5">
+              <section className="rounded-2xl border border-violet-200 bg-white p-5 shadow-sm">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-lg font-black text-violet-950">
+                      Executable Blueprint Metadata
+                    </h3>
+                    <p className="mt-1 text-sm font-semibold text-slate-500">
+                      Runtime-level objectives, adaptation, native-language support,
+                      completion logic, and teaching rules loaded from the GSRP.
+                    </p>
+                  </div>
+                  <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-black text-violet-700">
+                    Blueprint v1.4
+                  </span>
+                </div>
+
+                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                  <div className="rounded-xl bg-violet-50 p-3">
+                    <p className="text-[11px] font-black uppercase tracking-wide text-violet-600">Blueprint ID</p>
+                    <p className="mt-1 break-all text-sm font-bold text-slate-800">{plan.elvyBlueprintMetadata.id || "Not provided"}</p>
+                  </div>
+                  <div className="rounded-xl bg-violet-50 p-3">
+                    <p className="text-[11px] font-black uppercase tracking-wide text-violet-600">Lesson ID</p>
+                    <p className="mt-1 break-all text-sm font-bold text-slate-800">{plan.elvyBlueprintMetadata.lessonId || lessonId}</p>
+                  </div>
+                </div>
+
+                <div className="mt-4 grid gap-4 xl:grid-cols-2">
+                  <JsonDetailCard title={`Objectives (${plan.elvyBlueprintMetadata.objectives.length})`} value={plan.elvyBlueprintMetadata.objectives} />
+                  <JsonDetailCard title="Native-language Support" value={plan.elvyBlueprintMetadata.nativeLanguageSupport} />
+                  <JsonDetailCard title="Adaptive Teaching" value={plan.elvyBlueprintMetadata.adaptation} />
+                  <JsonDetailCard title="Lesson Completion Rule" value={plan.elvyBlueprintMetadata.lessonCompletionRule} />
+                  <div className="xl:col-span-2">
+                    <JsonDetailCard title="Teaching Rules" value={plan.elvyBlueprintMetadata.teachingRules} />
+                  </div>
+                </div>
+              </section>
+
               {plan.elvyBlueprint.map((stage, index) => (
                 <div
                   key={`${stage.stage}-${index}`}
@@ -2899,6 +3241,81 @@ function LessonPlanPageContent() {
                       <span className={labelClass}>Transition</span>
                       <textarea className={inputClass} rows={2} value={stage.transition || ""} onChange={(event) => updateBlueprint(index, "transition", event.target.value)} />
                     </label>
+                  </div>
+
+                  <div className="mt-5 border-t border-violet-200 pt-5">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h4 className="font-black text-violet-950">Executable Stage Structure</h4>
+                        <p className="mt-1 text-xs font-semibold text-slate-500">
+                          Stage ID, linked objectives, scenes, whiteboards, teacher turns,
+                          learner activities, evaluation rules, and recovery logic.
+                        </p>
+                      </div>
+                      <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-violet-700 shadow-sm">
+                        {stage.scenes.length} scene{stage.scenes.length === 1 ? "" : "s"}
+                      </span>
+                    </div>
+
+                    <div className="mt-4 grid gap-3 md:grid-cols-2">
+                      <div className="rounded-xl border border-violet-100 bg-white p-3">
+                        <p className="text-[11px] font-black uppercase tracking-wide text-violet-600">Stage ID</p>
+                        <p className="mt-1 break-all text-sm font-bold text-slate-800">{stage.stageId || "Not provided"}</p>
+                      </div>
+                      <div className="rounded-xl border border-violet-100 bg-white p-3">
+                        <p className="text-[11px] font-black uppercase tracking-wide text-violet-600">Objective IDs</p>
+                        <p className="mt-1 text-sm font-bold text-slate-800">{stage.objectiveIds.length ? stage.objectiveIds.join(" • ") : "Not provided"}</p>
+                      </div>
+                    </div>
+
+                    <div className="mt-4">
+                      <JsonDetailCard title="Stage Completion Rule" value={stage.stageCompletionRule} />
+                    </div>
+
+                    <div className="mt-4 space-y-4">
+                      {stage.scenes.map((scene, sceneIndex) => (
+                        <details
+                          key={scene.sceneId || `${stage.stage}-${sceneIndex}`}
+                          className="overflow-hidden rounded-2xl border border-violet-200 bg-white"
+                        >
+                          <summary className="cursor-pointer list-none bg-violet-100/70 px-4 py-3">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div>
+                                <p className="font-black text-violet-950">
+                                  {scene.title || `Scene ${sceneIndex + 1}`}
+                                </p>
+                                <p className="mt-1 text-xs font-semibold text-slate-500">
+                                  {scene.sceneId || "No scene ID"}
+                                </p>
+                              </div>
+                              <div className="flex gap-2 text-[11px] font-black">
+                                <span className="rounded-full bg-white px-2.5 py-1 text-blue-700">
+                                  {scene.teacherTurns.length} turns
+                                </span>
+                                <span className="rounded-full bg-white px-2.5 py-1 text-emerald-700">
+                                  {scene.activities.length} activities
+                                </span>
+                              </div>
+                            </div>
+                          </summary>
+
+                          <div className="space-y-4 p-4">
+                            <div className="grid gap-3 md:grid-cols-2">
+                              <JsonTextCard title="Purpose" value={scene.purpose} />
+                              <JsonTextCard title="Objective IDs" value={scene.objectiveIds.join(" • ")} />
+                              <JsonTextCard title="Entry Condition" value={scene.entryCondition} />
+                              <JsonTextCard title="Completion Condition" value={scene.completionCondition} />
+                              <JsonTextCard title="Next Scene" value={scene.nextSceneId || ""} />
+                              <JsonTextCard title="Recovery Scene" value={scene.recoverySceneId || ""} />
+                            </div>
+                            <JsonDetailCard title="Learner-facing Whiteboard" value={scene.whiteboard} />
+                            <JsonDetailCard title={`Exact Elvy Teacher Turns (${scene.teacherTurns.length})`} value={scene.teacherTurns} />
+                            <JsonDetailCard title={`Learner Activities and Evaluation (${scene.activities.length})`} value={scene.activities} />
+                            <JsonDetailCard title="Teaching Asset IDs" value={scene.assetIds} />
+                          </div>
+                        </details>
+                      ))}
+                    </div>
                   </div>
                 </div>
               ))}

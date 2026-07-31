@@ -107,41 +107,57 @@ export default decideLesson;
 function startLesson(
   context: Readonly<LessonDirectorContext>,
 ): LessonDirectorDecision {
-  const { lessonState: state } = context;
+  const { lessonState: state, teachingPolicy: policy } = context;
   const learnerName = state.studentState.displayName?.trim();
   const studentState = state.studentState as unknown as Record<string, unknown>;
+
   const openingLanguage = String(
     studentState.nativeLanguage ||
-      studentState.preferredLanguage ||
-      studentState.supportLanguage ||
+      state.studentState.preferredLanguage ||
+      policy.languageSupportPolicy?.supportLanguage ||
       "English",
   ).trim();
+
+  const objectives = state.objectiveProgress
+    .map((objective) => objective.description.trim())
+    .filter(Boolean);
+
+  const mainObjective =
+    objectives[0] || state.lesson.lessonTitle.trim() || "today's lesson";
 
   return buildDecision(context, {
     actionType: "start-lesson",
     reasonCode: "lesson-start",
     elvy: {
-      speech: buildNativeLanguageOpening(
-        openingLanguage,
+      speech: buildLessonOpeningSpeech({
+        language: openingLanguage,
         learnerName,
-        state.lesson.lessonTitle,
-      ),
-      speechKey: "lesson.native-language-welcome",
+        lessonTitle: state.lesson.lessonTitle,
+        objectives,
+      }),
+      speechKey: "lesson.objective-opening",
       expression: "smile",
       gesture: "greet",
       speakAutomatically: true,
     },
     whiteboard: {
-      mode: "title",
-      title: "Welcome to your English class",
-      contentReference: `lesson:${state.lesson.lessonId}:welcome`,
+      mode: "objective",
+      title: "Today's lesson",
+      content: {
+        lessonTitle: state.lesson.lessonTitle,
+        heading: "You will learn to:",
+        objectives,
+      },
+      contentReference: `lesson:${state.lesson.lessonId}:objectives`,
       clearBeforeDisplay: true,
-      allowScroll: false,
+      allowScroll: objectives.length > 4,
     },
     studentTask: {
       taskId: `${state.currentSceneId}:ready`,
       type: "observe",
-      instruction: "Listen to Elvy's introduction and confirm when you are ready.",
+      instruction:
+        "Listen to Elvy's explanation, look at today's objectives, and confirm when you are ready.",
+      contentReference: `lesson:${state.lesson.lessonId}:objectives`,
       expectedResponse: { type: "confirmation" },
       required: true,
     },
@@ -161,20 +177,52 @@ function startLesson(
       waitingFor: "student-confirmation",
     },
     notes: [
-      "The lesson opens in the learner's preferred language.",
-      "The whiteboard shows only the welcome title until the learner confirms readiness.",
+      "A new lesson begins with psychological contact and a clear orientation.",
+      "The whiteboard displays the real lesson objectives.",
+      "Elvy explains the objectives first in English and then briefly in the learner's native language.",
+      `The main objective for future resume messages is: ${mainObjective}`,
     ],
   });
 }
 
-function buildNativeLanguageOpening(
+interface LessonOpeningSpeechInput {
+  language: string;
+  learnerName?: string;
+  lessonTitle: string;
+  objectives: readonly string[];
+}
+
+function buildLessonOpeningSpeech(
+  input: LessonOpeningSpeechInput,
+): string {
+  const name = input.learnerName ? `, ${input.learnerName}` : "";
+  const cleanTitle = input.lessonTitle.trim();
+  const objectives = input.objectives.length
+    ? input.objectives
+    : [cleanTitle];
+
+  const englishObjectives = joinNaturalList(objectives);
+  const englishOpening =
+    `Welcome${name}. I am happy to have you in class. ` +
+    `Today we will work on ${englishObjectives}. ` +
+    "We will learn together step by step, so take your time.";
+
+  const nativeExplanation = buildNativeObjectiveExplanation(
+    input.language,
+    objectives,
+  );
+
+  return nativeExplanation
+    ? `${englishOpening} ${nativeExplanation} Are you ready to begin?`
+    : `${englishOpening} Are you ready to begin?`;
+}
+
+function buildNativeObjectiveExplanation(
   language: string,
-  learnerName: string | undefined,
-  lessonTitle: string,
+  objectives: readonly string[],
 ): string {
   const normalizedLanguage = language.trim().toLowerCase();
-  const name = learnerName ? ` ${learnerName}` : "";
-  const title = lessonTitle.trim();
+  const objectiveText = joinNaturalList(objectives);
 
   if (
     normalizedLanguage === "ar" ||
@@ -182,20 +230,33 @@ function buildNativeLanguageOpening(
     normalizedLanguage.includes("arab") ||
     normalizedLanguage.includes("العربية")
   ) {
-    return `مرحباً${name}. درس اليوم هو: ${title}. سنتعرف أولاً على هدف الدرس، ثم نبدأ خطوة بخطوة. هل أنت مستعد؟`;
+    return `بالعربية: هدف درس اليوم هو أن تتعلم: ${objectiveText}. سنعمل معاً خطوة بخطوة، فلا تقلق.`;
   }
 
   if (
     normalizedLanguage === "fr" ||
     normalizedLanguage.startsWith("fr-") ||
     normalizedLanguage.includes("french") ||
-    normalizedLanguage.includes("français") ||
-    normalizedLanguage.includes("french")
+    normalizedLanguage.includes("français")
   ) {
-    return `Bonjour${name}. La leçon d'aujourd'hui est : ${title}. Nous allons d'abord découvrir l'objectif, puis avancer étape par étape. Es-tu prêt ?`;
+    return `En français : l'objectif du cours d'aujourd'hui est d'apprendre à ${objectiveText}. Nous avancerons ensemble, étape par étape.`;
   }
 
-  return `Welcome${name}. Today's lesson is ${title}. First, we will look at the lesson goal, then begin step by step. Are you ready?`;
+  return "";
+}
+
+function joinNaturalList(items: readonly string[]): string {
+  const cleanItems = items.map((item) => item.trim()).filter(Boolean);
+
+  if (cleanItems.length === 0) return "today's lesson";
+  if (cleanItems.length === 1) return cleanItems[0];
+  if (cleanItems.length === 2) {
+    return `${cleanItems[0]} and ${cleanItems[1]}`;
+  }
+
+  return `${cleanItems.slice(0, -1).join(", ")}, and ${
+    cleanItems[cleanItems.length - 1]
+  }`;
 }
 
 function startScene(

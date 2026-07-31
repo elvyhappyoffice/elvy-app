@@ -28,6 +28,16 @@ import type {
   TeachingBrainResult,
 } from "./types";
 
+export type BlueprintAdapterSource = {
+  /**
+   * The canonical, separately stored Elvy Teaching Blueprint from the GSRP.
+   * It may be either the complete executable Blueprint v1.4 object
+   * ({ objectives, stages, nativeLanguageSupport, adaptation,
+   * lessonCompletionRule, teachingRules }) or the legacy stages array.
+   */
+  blueprintData?: unknown;
+};
+
 export type BlueprintAdapterContext = {
   lessonId: string;
   curriculumId: string;
@@ -130,6 +140,563 @@ function slugify(value: string, fallback: string): string {
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.map(clean).filter(Boolean))];
 }
+
+function asObject(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function asObjectArray(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value)
+    ? value.filter(
+        (item): item is Record<string, unknown> =>
+          Boolean(item) &&
+          typeof item === "object" &&
+          !Array.isArray(item),
+      )
+    : [];
+}
+
+function textArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.map(clean).filter(Boolean)
+    : [];
+}
+
+function executableBlueprintObject(
+  source?: BlueprintAdapterSource,
+): Record<string, unknown> | null {
+  return asObject(source?.blueprintData);
+}
+
+function hasExecutableBlueprint(
+  source?: BlueprintAdapterSource,
+): boolean {
+  const blueprint = executableBlueprintObject(source);
+  if (!blueprint) return false;
+
+  const objectives = asObjectArray(blueprint.objectives);
+  const stages = asObjectArray(blueprint.stages);
+
+  return (
+    objectives.length > 0 &&
+    stages.some((stage) => {
+      const stageId = clean(stage.stageId);
+      const scenes = asObjectArray(stage.scenes);
+      return Boolean(stageId || scenes.length > 0);
+    })
+  );
+}
+
+function executableObjectives(
+  source: BlueprintAdapterSource | undefined,
+) {
+  const blueprint = executableBlueprintObject(source);
+  const objectives = asObjectArray(blueprint?.objectives);
+
+  return objectives.map((objective, index) => {
+    const id =
+      clean(objective.id) ||
+      `objective-executable-${index + 1}`;
+    const description =
+      clean(objective.description) ||
+      `Complete objective ${index + 1}.`;
+    const evidence =
+      clean(objective.evidence) ||
+      `The learner demonstrates: ${description}`;
+
+    return {
+      id,
+      type: inferObjectiveType(description),
+      statement: description,
+      measurableOutcome: evidence,
+      successThreshold: 70,
+      required: true,
+      priority: "essential" as const,
+      relatedContentIds: [] as string[],
+      prerequisiteObjectiveIds: [] as string[],
+    };
+  });
+}
+
+function mapExecutableActivityType(value: unknown):
+  | "greeting"
+  | "conversation"
+  | "explanation"
+  | "demonstration"
+  | "modeling"
+  | "repeat_after_me"
+  | "question_answer"
+  | "open_question"
+  | "dialogue"
+  | "role_play"
+  | "listening"
+  | "reading"
+  | "writing"
+  | "quiz"
+  | "review"
+  | "reflection"
+  | "custom" {
+  const normalized = clean(value).toLowerCase();
+
+  if (normalized.includes("repeat")) return "repeat_after_me";
+  if (normalized.includes("dialogue")) return "dialogue";
+  if (normalized.includes("role")) return "role_play";
+  if (normalized.includes("listen")) return "listening";
+  if (normalized.includes("read")) return "reading";
+  if (normalized.includes("write") || normalized.includes("spell")) {
+    return "writing";
+  }
+  if (
+    normalized.includes("assessment") ||
+    normalized.includes("choose") ||
+    normalized.includes("match") ||
+    normalized.includes("quiz")
+  ) {
+    return "quiz";
+  }
+  if (
+    normalized.includes("answer") ||
+    normalized.includes("question")
+  ) {
+    return "question_answer";
+  }
+  if (
+    normalized.includes("greet") ||
+    normalized.includes("hello")
+  ) {
+    return "greeting";
+  }
+  if (
+    normalized.includes("conversation") ||
+    normalized.includes("production") ||
+    normalized.includes("personal")
+  ) {
+    return "conversation";
+  }
+
+  return "custom";
+}
+
+function mapExecutableInputMode(
+  value: unknown,
+): "text" | "voice" | "choice" | "tap" | "drag" | "none" {
+  const normalized = clean(value).toLowerCase();
+
+  if (normalized.includes("choice")) return "choice";
+  if (
+    normalized.includes("text") ||
+    normalized.includes("write") ||
+    normalized.includes("type")
+  ) {
+    return "text";
+  }
+  if (
+    normalized.includes("voice") ||
+    normalized.includes("speak") ||
+    normalized.includes("oral")
+  ) {
+    return "voice";
+  }
+  if (normalized.includes("tap")) return "tap";
+  if (normalized.includes("drag")) return "drag";
+
+  return "voice";
+}
+
+function executableSupportSteps(
+  activity: Record<string, unknown>,
+  l1Enabled: boolean,
+) {
+  const hints = asObjectArray(activity.hints);
+
+  if (hints.length > 0) {
+    return hints.map((hint, index) => ({
+      level:
+        typeof hint.level === "number"
+          ? Math.max(0, Math.min(5, hint.level))
+          : Math.min(index + 1, 5),
+      type: (
+        clean(hint.type)
+          .toLowerCase()
+          .replace(/-/g, "_") || "show_example"
+      ) as
+        | "wait"
+        | "repeat_instruction"
+        | "simplify_instruction"
+        | "give_sentence_frame"
+        | "translate_keyword"
+        | "show_example"
+        | "model_answer",
+      instruction:
+        clean(hint.content) ||
+        "Give one focused support step.",
+      content: clean(hint.content) || undefined,
+      maximumUses: 1,
+      useL1:
+        l1Enabled &&
+        /l1|translation|native/i.test(clean(hint.type)),
+    }));
+  }
+
+  return [];
+}
+
+function executableStages(
+  source: BlueprintAdapterSource | undefined,
+  fallbackObjectiveIds: string[],
+  vocabularyIds: string[],
+  grammarIds: string[],
+  functionIds: string[],
+) {
+  const blueprint = executableBlueprintObject(source);
+  const stages = asObjectArray(blueprint?.stages);
+
+  return stages.map((stage, stageIndex) => {
+    const sourceScenes = asObjectArray(stage.scenes);
+    const stageId =
+      clean(stage.stageId) ||
+      `stage-${stageIndex + 1}-${slugify(clean(stage.stage), "stage")}`;
+    const stageObjectiveIds =
+      textArray(stage.objectiveIds).length > 0
+        ? textArray(stage.objectiveIds)
+        : fallbackObjectiveIds;
+
+    const activities = sourceScenes.flatMap((scene, sceneIndex) => {
+      const sceneActivities = asObjectArray(scene.activities);
+      const teacherTurns = asObjectArray(scene.teacherTurns);
+      const whiteboard = asObject(scene.whiteboard);
+
+      return sceneActivities.map((activity, activityIndex) => {
+        const activityId =
+          clean(activity.activityId) ||
+          `${stageId}-scene-${sceneIndex + 1}-activity-${activityIndex + 1}`;
+        const acceptedVariants = textArray(activity.acceptedVariants);
+        const expectedAnswers = textArray(activity.expectedAnswers);
+        const options = textArray(activity.options);
+        const feedback = asObject(activity.feedback);
+        const evaluation = asObject(activity.evaluation);
+        const evidence = asObject(activity.evidence);
+        const prompt =
+          clean(activity.prompt) ||
+          clean(
+            teacherTurns.find(
+              (turn) =>
+                clean(turn.expectedActivityId) === activityId,
+            )?.text,
+          ) ||
+          clean(scene.purpose) ||
+          `Complete ${clean(stage.stage) || "the activity"}.`;
+
+        const exactAnswers = uniqueStrings([
+          ...expectedAnswers,
+          clean(activity.correctAnswer),
+        ]);
+
+        const semanticDescription =
+          textArray(activity.meaningCriteria).join(" ") ||
+          clean(evaluation?.passRule) ||
+          clean(scene.completionCondition) ||
+          `A response that satisfies the activity prompt.`;
+
+        const modelAnswer =
+          exactAnswers[0] ||
+          acceptedVariants[0] ||
+          options[0] ||
+          undefined;
+
+        const activityObjectiveIds =
+          textArray(activity.objectiveIds).length > 0
+            ? textArray(activity.objectiveIds)
+            : stageObjectiveIds;
+
+        const inputMode = mapExecutableInputMode(
+          activity.inputMode,
+        );
+
+        return {
+          id: activityId,
+          order: activityIndex + 1,
+          type: mapExecutableActivityType(activity.type),
+          title:
+            clean(activity.title) ||
+            clean(scene.title) ||
+            `Activity ${activityIndex + 1}`,
+          purpose:
+            clean(scene.purpose) ||
+            semanticDescription,
+          instruction: prompt,
+          teacherPrompt: prompt,
+          targetObjectiveIds: activityObjectiveIds,
+          targetVocabularyIds: vocabularyIds,
+          targetGrammarIds: grammarIds,
+          targetFunctionIds: functionIds,
+          inputModality: inputMode,
+          outputModalities: uniqueStrings([
+            "speech",
+            whiteboard ? "whiteboard" : "",
+          ]).filter(
+            (
+              modality,
+            ): modality is
+              | "speech"
+              | "text"
+              | "whiteboard"
+              | "image"
+              | "audio"
+              | "video"
+              | "animation" =>
+              [
+                "speech",
+                "text",
+                "whiteboard",
+                "image",
+                "audio",
+                "video",
+                "animation",
+              ].includes(modality),
+          ),
+          expectedResponses: [
+            {
+              id: `${activityId}-response-1`,
+              exactAnswers,
+              acceptableAnswers: acceptedVariants,
+              requiredKeywords: [] as string[],
+              forbiddenKeywords: [] as string[],
+              semanticDescription,
+              modelAnswer,
+              caseSensitive: false,
+              allowMinorSpellingErrors: true,
+              allowEquivalentMeaning: true,
+              evaluationFocus: {
+                meaning: true,
+                grammar: grammarIds.length > 0,
+                vocabulary: vocabularyIds.length > 0,
+                pronunciation:
+                  inputMode === "voice",
+                fluency:
+                  /production|dialogue|role|conversation/i.test(
+                    clean(activity.type),
+                  ),
+                spelling: inputMode === "text",
+                punctuation: inputMode === "text",
+              },
+            },
+          ],
+          minimumAttempts: 1,
+          maximumAttempts:
+            typeof activity.retryLimit === "number"
+              ? Math.max(1, activity.retryLimit)
+              : 3,
+          estimatedMinutes: 2,
+          required: true,
+          supportSteps: executableSupportSteps(
+            activity,
+            true,
+          ),
+          successRule: {
+            type: "minimum_score" as const,
+            minimumScore: 65,
+            requireTargetVocabulary:
+              vocabularyIds.length > 0,
+            requireTargetGrammar:
+              grammarIds.length > 0,
+            requireUnderstandablePronunciation:
+              inputMode === "voice",
+          },
+          allowSkip: false,
+          allowAlternativeActivity: false,
+          metadata: {
+            sceneId:
+              clean(scene.sceneId) ||
+              `${stageId}-scene-${sceneIndex + 1}`,
+            whiteboard,
+            teacherTurns,
+            evidence,
+            feedback,
+            evaluation,
+            onSuccess: asObject(activity.onSuccess),
+            onFailure: asObject(activity.onFailure),
+            assetIds: textArray(scene.assetIds),
+          },
+        };
+      });
+    });
+
+    const stageCompletion = asObject(
+      stage.stageCompletionRule,
+    );
+    const firstTeacherTurn = sourceScenes
+      .flatMap((scene) => asObjectArray(scene.teacherTurns))
+      .find((turn) => clean(turn.text));
+
+    return {
+      id: stageId,
+      order: stageIndex + 1,
+      type: normalizeStageType(clean(stage.stage)),
+      title:
+        clean(stage.stage) ||
+        `Stage ${stageIndex + 1}`,
+      purpose:
+        clean(stage.teachingObjective) ||
+        clean(stage.elvyScript) ||
+        `Complete stage ${stageIndex + 1}.`,
+      objectiveIds: stageObjectiveIds,
+      estimatedMinutes: parseMinutes(
+        clean(stage.duration),
+        5,
+      ),
+      required: true,
+      skippable: false,
+      activities:
+        activities.length > 0
+          ? activities
+          : [
+              {
+                id: `${stageId}-activity-1`,
+                order: 1,
+                type: "custom" as const,
+                title:
+                  clean(stage.stage) ||
+                  `Stage ${stageIndex + 1}`,
+                purpose:
+                  clean(stage.teachingObjective) ||
+                  "Complete the stage objective.",
+                instruction:
+                  clean(stage.elvyScript) ||
+                  clean(stage.teachingObjective) ||
+                  "Continue with the lesson.",
+                teacherPrompt:
+                  clean(stage.elvyScript) || undefined,
+                targetObjectiveIds: stageObjectiveIds,
+                targetVocabularyIds: vocabularyIds,
+                targetGrammarIds: grammarIds,
+                targetFunctionIds: functionIds,
+                inputModality: "voice" as const,
+                outputModalities: ["speech"] as const,
+                expectedResponses: [
+                  {
+                    id: `${stageId}-activity-1-response-1`,
+                    exactAnswers: [] as string[],
+                    acceptableAnswers:
+                      textArray(stage.expectedResponses),
+                    requiredKeywords: [] as string[],
+                    forbiddenKeywords: [] as string[],
+                    semanticDescription:
+                      clean(stage.evaluationCriteria) ||
+                      "A relevant learner response.",
+                    modelAnswer:
+                      textArray(stage.expectedResponses)[0] ||
+                      undefined,
+                    caseSensitive: false,
+                    allowMinorSpellingErrors: true,
+                    allowEquivalentMeaning: true,
+                    evaluationFocus: {
+                      meaning: true,
+                      grammar: grammarIds.length > 0,
+                      vocabulary: vocabularyIds.length > 0,
+                      pronunciation: true,
+                      fluency: false,
+                      spelling: false,
+                      punctuation: false,
+                    },
+                  },
+                ],
+                minimumAttempts: 1,
+                maximumAttempts:
+                  typeof stage.retryLimit === "number"
+                    ? Math.max(1, stage.retryLimit)
+                    : 3,
+                estimatedMinutes: parseMinutes(
+                  clean(stage.duration),
+                  5,
+                ),
+                required: true,
+                supportSteps: [],
+                successRule: {
+                  type: "minimum_score" as const,
+                  minimumScore: 65,
+                  requireTargetVocabulary:
+                    vocabularyIds.length > 0,
+                  requireTargetGrammar:
+                    grammarIds.length > 0,
+                  requireUnderstandablePronunciation: true,
+                },
+                allowSkip: false,
+                allowAlternativeActivity: false,
+              },
+            ],
+      completionRule: {
+        type: "all_required_activities_completed" as const,
+        requiredActivityIds:
+          activities.length > 0
+            ? activities.map((activity) => activity.id)
+            : [`${stageId}-activity-1`],
+        minimumCompletedActivities:
+          typeof stageCompletion?.minimumObjectiveEvidence ===
+          "number"
+            ? Math.max(
+                1,
+                Math.min(
+                  activities.length || 1,
+                  stageCompletion.minimumObjectiveEvidence,
+                ),
+              )
+            : activities.length || 1,
+      },
+      entryMessage:
+        clean(firstTeacherTurn?.text) ||
+        clean(stage.elvyScript) ||
+        undefined,
+      completionMessage:
+        clean(stage.successAction) ||
+        `Good work. ${clean(stage.stage) || "This stage"} is complete.`,
+      metadata: {
+        sourceStageId: clean(stage.stageId),
+        sourceScenes,
+        stageCompletionRule: stageCompletion,
+        whiteboardPlan: stage.whiteboardPlan,
+      },
+    };
+  });
+}
+
+function normalizeBlueprintStages(
+  plan: LessonPlan,
+  source?: BlueprintAdapterSource,
+): ElvyBlueprintStage[] {
+  const external = source?.blueprintData;
+  const externalObject = asObject(external);
+  const externalStages = Array.isArray(external)
+    ? external
+    : Array.isArray(externalObject?.stages)
+      ? externalObject.stages
+      : [];
+
+  if (externalStages.length > 0) {
+    return externalStages.filter(asObject) as unknown as ElvyBlueprintStage[];
+  }
+
+  return Array.isArray(plan.elvyBlueprint)
+    ? plan.elvyBlueprint.filter(asObject) as unknown as ElvyBlueprintStage[]
+    : [];
+}
+
+function normalizeLessonPlanCollections(
+  plan: LessonPlan,
+  source?: BlueprintAdapterSource,
+): LessonPlan {
+  return {
+    ...plan,
+    stages: Array.isArray(plan.stages) ? plan.stages : [],
+    integratedSkills: Array.isArray(plan.integratedSkills)
+      ? plan.integratedSkills
+      : [],
+    elvyBlueprint: normalizeBlueprintStages(plan, source),
+  };
+}
+
 
 function splitList(value: string): string[] {
   const normalized = clean(value);
@@ -976,33 +1543,65 @@ export function validateLessonPlan(
 export function buildTeachingBrainLesson(
   plan: LessonPlan,
   context: BlueprintAdapterContext,
+  source?: BlueprintAdapterSource,
 ): TeachingBrainLesson {
+  // GSRP Teacher Plans and Elvy Teaching Blueprints are intentionally stored
+  // as separate artifacts. Normalize optional collections here so a valid
+  // Teacher Plan never crashes merely because its Blueprint is separate.
+  const normalizedPlan = normalizeLessonPlanCollections(plan, source);
+
   const targetLanguage =
-    context.targetLanguage || inferLanguageCode(plan.textbook || plan.sourceBook);
+    context.targetLanguage ||
+    inferLanguageCode(normalizedPlan.textbook || normalizedPlan.sourceBook);
   const sourceLanguage = context.sourceLanguage || "other";
-  const objectives = createObjectives(plan);
-  const vocabulary = createVocabulary(plan, targetLanguage);
-  const grammar = createGrammar(plan);
-  const functions = createFunctions(plan);
-  const skills = createSkills(plan);
+  const objectives = hasExecutableBlueprint(source)
+    ? executableObjectives(source)
+    : createObjectives(normalizedPlan);
+  const vocabulary = createVocabulary(normalizedPlan, targetLanguage);
+  const grammar = createGrammar(normalizedPlan);
+  const functions = createFunctions(normalizedPlan);
+  const skills = createSkills(normalizedPlan);
   const objectiveIds = objectives.map((item) => item.id);
   const vocabularyIds = vocabulary.map((item) => item.id);
   const grammarIds = grammar.map((item) => item.id);
   const functionIds = functions.map((item) => item.id);
-  const stages = createStages(
-    plan,
-    objectiveIds,
-    vocabularyIds,
-    grammarIds,
-    functionIds,
-  );
-  const assessment = createAssessment(plan, objectiveIds);
+  const stages = hasExecutableBlueprint(source)
+    ? executableStages(
+        source,
+        objectiveIds,
+        vocabularyIds,
+        grammarIds,
+        functionIds,
+      )
+    : createStages(
+        normalizedPlan,
+        objectiveIds,
+        vocabularyIds,
+        grammarIds,
+        functionIds,
+      );
+  const assessment = createAssessment(normalizedPlan, objectiveIds);
   const now = new Date().toISOString();
   const learnerL1 = context.learnerL1;
+  const executableBlueprint = executableBlueprintObject(source);
+  const nativeLanguageSupport = asObject(
+    executableBlueprint?.nativeLanguageSupport,
+  );
+  const adaptation = asObject(
+    executableBlueprint?.adaptation,
+  );
+  const lessonCompletionRule = asObject(
+    executableBlueprint?.lessonCompletionRule,
+  );
+  const teachingRules = asObject(
+    executableBlueprint?.teachingRules,
+  );
+
   const l1Enabled =
+    nativeLanguageSupport?.enabled === true ||
     Boolean(learnerL1) ||
     /l1|first language|mother tongue|translation/i.test(
-      `${plan.teacherNotes} ${plan.differentiation} ${plan.elvyBlueprint
+      `${normalizedPlan.teacherNotes} ${normalizedPlan.differentiation} ${normalizedPlan.elvyBlueprint
         .map((item) => blueprintText(item))
         .join(" ")}`,
     );
@@ -1019,25 +1618,25 @@ export function buildTeachingBrainLesson(
       unitId: clean(context.unitId) || undefined,
       lessonId: clean(context.lessonId),
       curriculumTitle: clean(context.curriculumTitle) || undefined,
-      levelTitle: clean(plan.level) || undefined,
-      sublevelTitle: clean(plan.sublevel) || undefined,
-      unitTitle: clean(plan.unit) || undefined,
-      lessonTitle: clean(plan.lessonTitle),
-      sourceBookTitle: clean(plan.sourceBook || plan.textbook) || undefined,
+      levelTitle: clean(normalizedPlan.level) || undefined,
+      sublevelTitle: clean(normalizedPlan.sublevel) || undefined,
+      unitTitle: clean(normalizedPlan.unit) || undefined,
+      lessonTitle: clean(normalizedPlan.lessonTitle),
+      sourceBookTitle: clean(normalizedPlan.sourceBook || normalizedPlan.textbook) || undefined,
       sourceEdition: clean(context.sourceEdition) || undefined,
       sourceLanguage,
-      pageRange: parsePageRange(plan.pages),
+      pageRange: parsePageRange(normalizedPlan.pages),
     },
-    title: clean(plan.lessonTitle),
+    title: clean(normalizedPlan.lessonTitle),
     description:
-      clean(plan.theme) ||
-      clean(plan.lessonObjectives) ||
-      `${clean(plan.lessonNumber)}: ${clean(plan.lessonTitle)}`,
+      clean(normalizedPlan.theme) ||
+      clean(normalizedPlan.lessonObjectives) ||
+      `${clean(normalizedPlan.lessonNumber)}: ${clean(normalizedPlan.lessonTitle)}`,
     targetLanguage,
-    level: clean(plan.cefrLevel || plan.sublevel || plan.level),
-    estimatedMinutes: parseMinutes(plan.duration, 60),
+    level: clean(normalizedPlan.cefrLevel || normalizedPlan.sublevel || normalizedPlan.level),
+    estimatedMinutes: parseMinutes(normalizedPlan.duration, 60),
     objectives,
-    prerequisites: splitList(plan.prerequisites),
+    prerequisites: splitList(normalizedPlan.prerequisites),
     vocabulary,
     grammar,
     functions,
@@ -1046,10 +1645,27 @@ export function buildTeachingBrainLesson(
     assessment,
     completionCriteria: {
       minimumLessonScore: 65,
-      minimumObjectiveMastery: 65,
-      requiredObjectiveIds: objectives
-        .filter((objective) => objective.required)
-        .map((objective) => objective.id),
+      minimumObjectiveMastery:
+        typeof lessonCompletionRule?.minimumEvidencePerObjective ===
+        "number"
+          ? Math.max(
+              1,
+              Math.min(
+                100,
+                lessonCompletionRule.minimumEvidencePerObjective * 65,
+              ),
+            )
+          : 65,
+      requiredObjectiveIds:
+        textArray(
+          lessonCompletionRule?.requiredObjectiveIds,
+        ).length > 0
+          ? textArray(
+              lessonCompletionRule?.requiredObjectiveIds,
+            )
+          : objectives
+              .filter((objective) => objective.required)
+              .map((objective) => objective.id),
       requiredActivityIds: stages.flatMap((stage) =>
         stage.activities
           .filter((activity) => activity.required)
@@ -1080,7 +1696,12 @@ export function buildTeachingBrainLesson(
       translateKeyVocabulary: l1Enabled,
       translateGrammarExplanations: false,
       returnToTargetLanguageAfterSupport: true,
-      maximumConsecutiveL1Turns: l1Enabled ? 1 : undefined,
+      maximumConsecutiveL1Turns: l1Enabled
+        ? typeof nativeLanguageSupport?.maximumConsecutiveL1Turns ===
+          "number"
+          ? nativeLanguageSupport.maximumConsecutiveL1Turns
+          : 1
+        : undefined,
     },
     correctionPolicy: {
       defaultTiming: "immediate",
@@ -1103,10 +1724,26 @@ export function buildTeachingBrainLesson(
       allowStageSkipping: false,
       allowPrerequisiteReview: true,
       protectRequiredObjectives: true,
-      reduceDifficultyAfterFailedAttempts: 2,
-      increaseDifficultyAfterSuccessfulAttempts: 3,
+      reduceDifficultyAfterFailedAttempts:
+        textArray(adaptation?.whenStruggling).length > 0
+          ? 2
+          : 2,
+      increaseDifficultyAfterSuccessfulAttempts:
+        textArray(adaptation?.whenSuccessful).length > 0
+          ? 2
+          : 3,
       maximumRetriesPerActivity: 3,
       maximumSupportLevel: 5,
+    },
+    metadata: {
+      executableBlueprint: hasExecutableBlueprint(source),
+      sourceBlueprint: executableBlueprint || undefined,
+      nativeLanguageSupport:
+        nativeLanguageSupport || undefined,
+      adaptation: adaptation || undefined,
+      lessonCompletionRule:
+        lessonCompletionRule || undefined,
+      teachingRules: teachingRules || undefined,
     },
     teachingTone: {
       primary: "encouraging",
@@ -1114,20 +1751,23 @@ export function buildTeachingBrainLesson(
       avoid: ["shaming", "sarcasm", "overcorrection", "unnecessary complexity"],
       useLearnerName: true,
       maximumSentenceLength:
-        /pre-a1|a1|beginner/i.test(plan.cefrLevel || plan.level) ? 14 : 22,
+        /pre-a1|a1|beginner/i.test(normalizedPlan.cefrLevel || normalizedPlan.level) ? 14 : 22,
       praiseFrequency: "moderate",
     },
     status:
-      plan.status === "Ready for Elvy"
+      normalizedPlan.status === "Ready for Elvy"
         ? "active"
-        : plan.status === "Approved"
+        : normalizedPlan.status === "Approved"
           ? "active"
           : "draft",
     sourceBlueprintId:
       clean(context.sourceBlueprintId) ||
       `${clean(context.lessonId)}-lesson-plan`,
     sourceBlueprintVersion:
-      clean(context.sourceBlueprintVersion) || "lesson-plan-v1",
+      clean(context.sourceBlueprintVersion) ||
+      (hasExecutableBlueprint(source)
+        ? "executable-blueprint-v1.4"
+        : "lesson-plan-v1"),
     createdAt: context.createdAt || now,
     updatedAt: context.updatedAt || now,
   };
@@ -1140,6 +1780,7 @@ export function buildTeachingBrainLesson(
 export function safeAdaptLessonPlan(
   plan: LessonPlan,
   context: BlueprintAdapterContext,
+  source?: BlueprintAdapterSource,
 ): SafeBlueprintAdapterResult {
   const sourceValidation = validateLessonPlan(plan, context);
 
@@ -1151,7 +1792,7 @@ export function safeAdaptLessonPlan(
   }
 
   try {
-    const lesson = buildTeachingBrainLesson(plan, context);
+    const lesson = buildTeachingBrainLesson(plan, context, source);
     const parsed = safeParseTeachingBrainLesson(lesson);
 
     if (!parsed.success) {
@@ -1204,8 +1845,9 @@ export function safeAdaptLessonPlan(
 export function adaptLessonPlan(
   plan: LessonPlan,
   context: BlueprintAdapterContext,
+  source?: BlueprintAdapterSource,
 ): TeachingBrainLesson {
-  const result = safeAdaptLessonPlan(plan, context);
+  const result = safeAdaptLessonPlan(plan, context, source);
 
   if (!result.success) {
     throw new BlueprintAdapterError(
@@ -1220,8 +1862,9 @@ export function adaptLessonPlan(
 export function adaptLessonPlanResult(
   plan: LessonPlan,
   context: BlueprintAdapterContext,
+  source?: BlueprintAdapterSource,
 ): TeachingBrainResult<TeachingBrainLesson> {
-  const result = safeAdaptLessonPlan(plan, context);
+  const result = safeAdaptLessonPlan(plan, context, source);
 
   if (result.success) {
     return {

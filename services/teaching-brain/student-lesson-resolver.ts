@@ -81,6 +81,94 @@ function normalizeCompact(value: unknown): string {
   return normalize(value).replace(/[^a-z0-9]+/g, "");
 }
 
+function extractSublevelCode(value: unknown): string {
+  const match = String(value ?? "")
+    .trim()
+    .toUpperCase()
+    .match(/\b(A1|A2|B1|B2|C1|C2)\b/);
+
+  return match?.[1] ?? "";
+}
+
+function unitReferenceVariants(value: unknown): string[] {
+  const raw = String(value ?? "").trim();
+
+  if (!raw) return [];
+
+  const variants = new Set<string>([raw]);
+  const colonIndex = raw.indexOf(":");
+
+  if (colonIndex >= 0) {
+    const beforeColon = raw.slice(0, colonIndex).trim();
+    const afterColon = raw.slice(colonIndex + 1).trim();
+
+    if (beforeColon) variants.add(beforeColon);
+    if (afterColon) variants.add(afterColon);
+  }
+
+  return [...variants];
+}
+
+function unitMatchesReference(
+  expected: unknown,
+  ...candidates: unknown[]
+): boolean {
+  const expectedVariants = unitReferenceVariants(expected);
+  const candidateVariants = candidates.flatMap(unitReferenceVariants);
+
+  return expectedVariants.some((expectedVariant) =>
+    matchesReference(expectedVariant, ...candidateVariants),
+  );
+}
+
+function lessonReferenceVariants(value: unknown): string[] {
+  const raw = String(value ?? "").trim();
+
+  if (!raw) return [];
+
+  const variants = new Set<string>([raw]);
+  const colonIndex = raw.indexOf(":");
+
+  if (colonIndex >= 0) {
+    const beforeColon = raw.slice(0, colonIndex).trim();
+    const afterColon = raw.slice(colonIndex + 1).trim();
+
+    if (beforeColon) variants.add(beforeColon);
+    if (afterColon) variants.add(afterColon);
+  }
+
+  const lessonNumberMatch = raw.match(/\blesson\s*(\d+)\b/i);
+  if (lessonNumberMatch?.[1]) {
+    variants.add(lessonNumberMatch[1]);
+    variants.add(`Lesson ${lessonNumberMatch[1]}`);
+  }
+
+  return [...variants];
+}
+
+function extractLessonNumber(value: unknown): string {
+  const raw = String(value ?? "").trim();
+
+  if (!raw) return "";
+
+  const explicitLessonMatch = raw.match(/\blesson\s*(\d+)\b/i);
+  if (explicitLessonMatch?.[1]) return explicitLessonMatch[1];
+
+  return /^\d+$/.test(raw) ? raw : "";
+}
+
+function lessonReferenceMatches(
+  expected: unknown,
+  ...candidates: unknown[]
+): boolean {
+  const expectedVariants = lessonReferenceVariants(expected);
+  const candidateVariants = candidates.flatMap(lessonReferenceVariants);
+
+  return expectedVariants.some((expectedVariant) =>
+    matchesReference(expectedVariant, ...candidateVariants),
+  );
+}
+
 function matchesReference(
   expected: unknown,
   ...candidates: unknown[]
@@ -107,22 +195,36 @@ function lessonMatches(
   lesson: CloudLesson,
   assignment: StudentLessonAssignment,
 ): boolean {
-  const numberMatch = matchesReference(
-    assignment.lesson,
-    lesson.id,
-    lesson.label,
-    lesson.lessonNumber,
-    lesson.order,
-    lesson.title,
-  );
+  const assignmentNumber =
+    extractLessonNumber(assignment.lesson) ||
+    extractLessonNumber(assignment.lessonTitle);
+
+  const storedNumber =
+    extractLessonNumber(lesson.lessonNumber) ||
+    extractLessonNumber(lesson.order) ||
+    extractLessonNumber(lesson.label) ||
+    extractLessonNumber(lesson.title) ||
+    extractLessonNumber(lesson.id);
+
+  const numberMatch =
+    lessonReferenceMatches(
+      assignment.lesson,
+      lesson.id,
+      lesson.label,
+      lesson.lessonNumber,
+      lesson.order,
+      lesson.title,
+    ) ||
+    Boolean(assignmentNumber && storedNumber === assignmentNumber);
 
   const titleRequested = normalize(assignment.lessonTitle);
   const titleMatch =
     !titleRequested ||
-    matchesReference(
+    lessonReferenceMatches(
       assignment.lessonTitle,
       lesson.title,
       lesson.label,
+      lesson.id,
     );
 
   return numberMatch && titleMatch;
@@ -159,15 +261,26 @@ function findSublevel(
   packageItem: ElvyDashboardPackage,
   assignment: StudentLessonAssignment,
 ): CloudSublevel | undefined {
-  return packageItem.level.sublevels.find((sublevel) =>
-    matchesReference(
-      assignment.sublevel,
-      sublevel.id,
-      sublevel.code,
-      sublevel.label,
-      sublevel.title,
-    ),
-  );
+  const assignmentCode = extractSublevelCode(assignment.sublevel);
+
+  return packageItem.level.sublevels.find((sublevel) => {
+    const storedCode =
+      extractSublevelCode(sublevel.code) ||
+      extractSublevelCode(sublevel.label) ||
+      extractSublevelCode(sublevel.title) ||
+      extractSublevelCode(sublevel.id);
+
+    return (
+      matchesReference(
+        assignment.sublevel,
+        sublevel.id,
+        sublevel.code,
+        sublevel.label,
+        sublevel.title,
+      ) ||
+      Boolean(assignmentCode && storedCode === assignmentCode)
+    );
+  });
 }
 
 function findUnit(
@@ -175,7 +288,7 @@ function findUnit(
   assignment: StudentLessonAssignment,
 ): CloudUnit | undefined {
   return sublevel.units.find((unit) =>
-    matchesReference(
+    unitMatchesReference(
       assignment.unit,
       unit.id,
       unit.label,
@@ -311,6 +424,9 @@ export async function resolveStudentTeachingLesson(
   const teachingBrainLesson = buildTeachingBrainLesson(
     lessonPlan,
     adapterContext,
+    {
+      blueprintData: lesson.blueprintData,
+    },
   );
 
   return Object.freeze({

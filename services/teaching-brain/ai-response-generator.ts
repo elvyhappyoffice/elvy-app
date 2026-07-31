@@ -52,12 +52,124 @@ function clean(value: unknown): string {
   return String(value ?? "").trim();
 }
 
+function isLegacyRetryReply(value: unknown): boolean {
+  const normalized = clean(value).toLowerCase();
+
+  return (
+    normalized.includes("please repeat your answer") ||
+    normalized.includes("try the activity once more") ||
+    normalized.includes('say "hello!" or "hi!" to start') ||
+    normalized.includes("repeat more slowly")
+  );
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function readText(value: unknown, ...keys: string[]): string | undefined {
+  const record = asRecord(value);
+  for (const key of keys) {
+    const item = record[key];
+    if (typeof item === "string" && item.trim()) return item.trim();
+  }
+  return undefined;
+}
+
+function isGenericFailureReply(value: unknown): boolean {
+  const normalized = clean(value).toLowerCase();
+
+  return [
+    "i am sorry. i cannot reply right now.",
+    "i'm sorry. i cannot reply right now.",
+    "i am sorry, i cannot reply right now.",
+    "sorry, i cannot reply right now.",
+  ].includes(normalized);
+}
+
 function safeJson(value: unknown): string {
   try {
     return JSON.stringify(value, null, 2);
   } catch {
     return String(value ?? "");
   }
+}
+
+
+function firstUsefulText(
+  value: unknown,
+  visited = new Set<unknown>(),
+): string {
+  if (typeof value === "string") {
+    const result = clean(value);
+    return result.length >= 2 ? result : "";
+  }
+
+  if (!value || typeof value !== "object" || visited.has(value)) {
+    return "";
+  }
+
+  visited.add(value);
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const result = firstUsefulText(item, visited);
+      if (result) return result;
+    }
+    return "";
+  }
+
+  const record = value as Record<string, unknown>;
+  const preferredKeys = [
+    "spokenText",
+    "reply",
+    "message",
+    "content",
+    "text",
+    "prompt",
+    "instruction",
+    "instructions",
+    "example",
+  ];
+
+  for (const key of preferredKeys) {
+    const result = firstUsefulText(record[key], visited);
+    if (result) return result;
+  }
+
+  return "";
+}
+
+function buildDeterministicTeachingReply(
+  runtimeResult: ProcessStudentTeachingTurnOutput,
+): string {
+  const teaching = runtimeResult.teaching;
+
+  if (lessonIsComplete(runtimeResult)) {
+    return "You have completed this lesson. Please contact the language center to unlock the next lesson.";
+  }
+
+  const directedText = firstUsefulText(teaching.directorCommand);
+
+  if (directedText && !isLegacyRetryReply(directedText)) {
+    return directedText.slice(0, 500);
+  }
+
+  const context = getActiveLessonContext(runtimeResult);
+  const activityInstruction = clean(context.activityInstructions);
+
+  if (activityInstruction) {
+    return activityInstruction.slice(0, 500);
+  }
+
+  const supportText = firstUsefulText(teaching.support);
+  if (supportText && !isLegacyRetryReply(supportText)) {
+    return supportText.slice(0, 500);
+  }
+
+  return "Let us continue with the current lesson. I will explain the next task first.";
 }
 
 function getActiveLessonContext(
@@ -75,6 +187,8 @@ function getActiveLessonContext(
   );
 
   return {
+    stage,
+    activity,
     stageTitle: stage?.title ?? session.activeStageId ?? "Current stage",
     activityTitle:
       activity?.title ?? session.activeActivityId ?? "Current activity",
@@ -83,6 +197,99 @@ function getActiveLessonContext(
         ? activity.instructions
         : undefined,
   };
+}
+
+function normalizeStage(value: unknown): string {
+  return clean(value).toLowerCase().replace(/[_\s]+/g, "-");
+}
+
+function isOpeningTurn(runtimeResult: ProcessStudentTeachingTurnOutput): boolean {
+  const teachingRecord = asRecord(runtimeResult.teaching);
+  const teachingMetadata = asRecord(teachingRecord.metadata);
+  const sessionMetadata = asRecord(runtimeResult.teaching.session.metadata);
+  const context = getActiveLessonContext(runtimeResult);
+  const entryMode = readText(teachingMetadata, "lessonEntryMode") ?? readText(sessionMetadata, "lessonEntryMode");
+  if (entryMode === "new") return true;
+
+  const stage = normalizeStage(
+    readText(context.stage, "type", "stage", "category", "title") ?? context.stageTitle,
+  );
+
+  return (
+    stage.includes("welcome") ||
+    stage.includes("opening") ||
+    stage.includes("introduction") ||
+    stage.includes("objective")
+  );
+}
+
+function lessonIsComplete(runtimeResult: ProcessStudentTeachingTurnOutput): boolean {
+  const completion = asRecord(runtimeResult.teaching.completion);
+  return (
+    completion.completed === true ||
+    completion.isComplete === true ||
+    completion.status === "completed"
+  );
+}
+
+function buildOpeningReply(
+  runtimeResult: ProcessStudentTeachingTurnOutput,
+  studentProfile: Record<string, unknown>,
+): string {
+  const studentName = clean(
+    studentProfile.name ?? studentProfile.displayName ?? studentProfile.username ?? "student",
+  );
+  const lessonTitle = clean(runtimeResult.lesson.lessonTitle) || "today's lesson";
+  const language = clean(
+    studentProfile.nativeLanguage ?? studentProfile.native_language ?? "",
+  ).toLowerCase();
+
+  const objectives = runtimeResult.lesson.teachingBrainLesson.objectives
+    .map((objective) => readText(objective, "text", "title", "label", "name", "description"))
+    .filter((value): value is string => Boolean(value))
+    .slice(0, 3);
+
+  const objectiveSentence = objectives.length
+    ? `Today we will learn to ${objectives.map((item) => item.replace(/[.!?]+$/, "")).join("; and ")}.`
+    : `Today we will work on ${lessonTitle}.`;
+
+  const nativeExplanation =
+    language === "arabic" || language === "ar" || language.includes("العربية")
+      ? `بالعربية: في هذا الدرس سنتعلم «${lessonTitle}» خطوةً خطوة. سأشرح لك المهمة أولاً، ثم نبدأ التدريب معاً.`
+      : language === "french" || language === "fr" || language.includes("français") || language.includes("francais")
+        ? `En français : dans cette leçon, nous allons apprendre « ${lessonTitle} » étape par étape. Je vais d’abord expliquer la tâche, puis nous pratiquerons ensemble.`
+        : "";
+
+  return [
+    `Welcome, ${studentName}.`,
+    objectiveSentence,
+    nativeExplanation,
+    "Are you ready to begin?",
+  ].filter(Boolean).join("\n\n");
+}
+
+function buildAuthoritativeReply(input: GenerateTeachingBrainResponseInput): string | undefined {
+  const { runtimeResult, studentProfile } = input;
+  const teaching = runtimeResult.teaching;
+
+  if (lessonIsComplete(runtimeResult)) {
+    return "You have completed this lesson. Please contact the language center to unlock the next lesson.";
+  }
+
+  if (isOpeningTurn(runtimeResult)) {
+    return buildOpeningReply(runtimeResult, studentProfile);
+  }
+
+  const directorText = firstUsefulText(teaching.directorCommand);
+  if (directorText && !isLegacyRetryReply(directorText)) {
+    return directorText.slice(0, 700);
+  }
+
+  const context = getActiveLessonContext(runtimeResult);
+  const activityInstruction = clean(context.activityInstructions);
+  if (activityInstruction) return activityInstruction.slice(0, 700);
+
+  return undefined;
 }
 
 export function buildTeachingBrainResponseInstructions(
@@ -183,6 +390,15 @@ export async function generateTeachingBrainResponse(
   }
 
   const instructions = buildTeachingBrainResponseInstructions(input);
+  const authoritativeReply = buildAuthoritativeReply(input);
+
+  if (authoritativeReply) {
+    return Object.freeze({
+      text: authoritativeReply,
+      usage: null,
+      instructions,
+    });
+  }
 
   try {
     const response = await AI.chat({
@@ -194,11 +410,18 @@ export async function generateTeachingBrainResponse(
 
     const text = clean(response.text);
 
-    if (!text) {
-      throw new AIResponseGeneratorError(
-        "EMPTY_RESPONSE",
-        "The AI language-realization layer returned an empty response.",
+    if (!text || isGenericFailureReply(text) || isLegacyRetryReply(text)) {
+      console.error(
+        !text
+          ? "AI response generator returned an empty response. Using the Teaching Brain fallback."
+          : "AI response generator returned the generic failure reply. Using the Teaching Brain fallback.",
       );
+
+      return Object.freeze({
+        text: buildDeterministicTeachingReply(input.runtimeResult),
+        usage: response.usage ?? null,
+        instructions,
+      });
     }
 
     return Object.freeze({
@@ -207,20 +430,16 @@ export async function generateTeachingBrainResponse(
       instructions,
     });
   } catch (error) {
-    if (error instanceof AIResponseGeneratorError) {
-      throw error;
-    }
-
-    throw new AIResponseGeneratorError(
-      "GENERATION_FAILED",
-      error instanceof Error
-        ? error.message
-        : "The AI response generator failed.",
-      {
-        recoverable: true,
-        cause: error,
-      },
+    console.error(
+      "AI response generation failed. Using the Teaching Brain fallback:",
+      error,
     );
+
+    return Object.freeze({
+      text: buildDeterministicTeachingReply(input.runtimeResult),
+      usage: null,
+      instructions,
+    });
   }
 }
 

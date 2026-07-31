@@ -406,6 +406,22 @@ function isAttemptLimitReachedError(error: unknown): boolean {
   );
 }
 
+function isStageNotCompleteError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+
+  const errorRecord = error as {
+    code?: unknown;
+    message?: unknown;
+  };
+
+  return (
+    errorRecord.code === "STAGE_NOT_COMPLETE" ||
+    cleanErrorMessage(errorRecord.message).includes(
+      "has not satisfied its completion rule",
+    )
+  );
+}
+
 function shouldGenerateSupport(decision: TeachingDecision): boolean {
   return ![
     "complete_lesson",
@@ -450,6 +466,115 @@ function runtimeErrorToTeachingBrainError(
     recoverable: true,
     details: {
       cause: error instanceof Error ? error.name : String(error),
+    },
+  };
+}
+
+function readRuntimeMetadataFlag(
+  metadata: Readonly<Record<string, unknown>> | undefined,
+  key: string,
+): boolean {
+  return metadata?.[key] === true;
+}
+
+function readRuntimeMetadataText(
+  metadata: Readonly<Record<string, unknown>> | undefined,
+  key: string,
+): string | undefined {
+  const value = metadata?.[key];
+  return typeof value === "string" && value.trim()
+    ? value.trim()
+    : undefined;
+}
+
+function readRecordText(
+  value: unknown,
+  ...keys: string[]
+): string | undefined {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value)
+  ) {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+
+  for (const key of keys) {
+    const field = record[key];
+
+    if (typeof field === "string" && field.trim()) {
+      return field.trim();
+    }
+  }
+
+  return undefined;
+}
+
+function lessonDirectorControlsOpening(
+  input: ProcessTeachingTurnInput,
+): boolean {
+  return (
+    Boolean(input.classroom?.lessonDirector) &&
+    readRuntimeMetadataText(input.metadata, "lessonEntryMode") === "new" &&
+    !readRuntimeMetadataFlag(input.metadata, "lessonIntroductionCompleted")
+  );
+}
+
+/**
+ * The Lesson Director still decides the active pedagogical action. On the
+ * first turn after an unfinished lesson is restored, this helper changes only
+ * Elvy's opening speech and prevents the objectives board from being shown
+ * again. The saved scene/activity state remains untouched.
+ */
+function applyResumeLessonOpening(
+  decision: LessonDirectorDecision,
+  input: ProcessTeachingTurnInput,
+): LessonDirectorDecision {
+  if (!readRuntimeMetadataFlag(input.metadata, "lessonResumed")) {
+    return decision;
+  }
+
+  const learnerName = input.learnerName?.trim();
+  const mainObjective =
+    readRuntimeMetadataText(input.metadata, "resumeMainObjective") ??
+    readRecordText(
+      input.lesson.objectives[0],
+      "text",
+      "title",
+      "label",
+      "name",
+    ) ??
+    input.lesson.title?.trim() ??
+    "this lesson";
+
+  const welcome = learnerName
+    ? `Welcome back, ${learnerName}.`
+    : "Welcome back.";
+
+  return {
+    ...decision,
+    elvy: {
+      ...decision.elvy,
+      speech: `${welcome} Let's continue working on ${mainObjective}.`,
+      speechKey: "lesson.resume",
+      expression: "smile",
+      gesture: "encourage",
+      speakAutomatically: true,
+    },
+    whiteboard: {
+      mode: "custom",
+      clearBeforeDisplay: false,
+    },
+    diagnostics: {
+      warnings: decision.diagnostics?.warnings ?? [],
+      notes: [
+        ...(decision.diagnostics?.notes ?? []),
+        "The unfinished lesson was restored.",
+        "The lesson introduction and objective explanation were not repeated.",
+        "The saved stage and activity remain active.",
+      ],
     },
   };
 }
@@ -561,6 +686,14 @@ export class TeachingBrainRuntime {
       state: input.session,
     });
 
+    /*
+     * During a brand-new lesson opening, the Lesson Director is the
+     * authoritative classroom controller. The legacy evaluator/decision
+     * pipeline may still calculate diagnostics, but it must not generate a
+     * competing learner-facing response or mutate lesson progression.
+     */
+    const directorOwnsOpening = lessonDirectorControlsOpening(input);
+
     const evaluation = await runStage("evaluate_response", () =>
       this.responseEvaluator.evaluate({
         lesson: input.lesson,
@@ -604,6 +737,16 @@ export class TeachingBrainRuntime {
     );
 
     await runStage("record_attempt", () => {
+      if (directorOwnsOpening) {
+        actions.push({
+          action: "record_attempt",
+          applied: false,
+          reason:
+            "The Lesson Director controls the new-lesson introduction; the opening response is not recorded as a teaching attempt.",
+        });
+        return;
+      }
+
       const state = sessionEngine.getState();
       if (
         state.status !== "active" ||
@@ -667,25 +810,53 @@ export class TeachingBrainRuntime {
           currentState.status === "active" &&
           currentState.activeActivityId === context.activity.id
         ) {
-          sessionEngine.skipActivity(
-            "Maximum attempts reached. Continue with the next teaching activity.",
-            evaluation.evaluation.createdAt,
-          );
+          if (context.activity.allowSkip) {
+            sessionEngine.skipActivity(
+              "Maximum attempts reached. Continue with the next teaching activity.",
+              evaluation.evaluation.createdAt,
+            );
 
-          actions.push({
-            action: "skip_activity",
-            applied: true,
-            reason:
-              "Maximum attempts reached; the lesson continued with the next activity.",
-            details: {
-              exhaustedActivityId: context.activity.id,
-            },
-          });
+            actions.push({
+              action: "skip_activity",
+              applied: true,
+              reason:
+                "Maximum attempts reached; the lesson continued with the next activity.",
+              details: {
+                exhaustedActivityId: context.activity.id,
+              },
+            });
+          } else {
+            sessionEngine.completeActivity(
+              "Maximum attempts reached on a required activity. Continue safely with the next teaching activity.",
+              evaluation.evaluation.createdAt,
+              true,
+            );
+
+            actions.push({
+              action: "complete_activity",
+              applied: true,
+              reason:
+                "Maximum attempts reached on a non-skippable activity; it was closed safely so the lesson could continue.",
+              details: {
+                exhaustedActivityId: context.activity.id,
+              },
+            });
+          }
         }
       }
     });
 
     await runStage("apply_objectives", () => {
+      if (directorOwnsOpening) {
+        actions.push({
+          action: "update_objective",
+          applied: false,
+          reason:
+            "Objective evidence is not recorded during the Lesson Director introduction.",
+        });
+        return;
+      }
+
       for (const command of objectiveTrackingToSessionCommands(
         objectiveTracking,
       )) {
@@ -702,6 +873,7 @@ export class TeachingBrainRuntime {
     let directorCommand: TeachingBrainDirectorCommand | undefined;
 
     if (
+      !directorOwnsOpening &&
       this.config.generateSupportForEveryDecision &&
       shouldGenerateSupport(decision.decision)
     ) {
@@ -763,12 +935,14 @@ export class TeachingBrainRuntime {
     let whiteboard: WhiteboardEngineResult | undefined;
 
     if (input.classroom?.lessonDirector) {
-      lessonDirectorDecision = await runStage("lesson_director", () =>
-        decideLesson({
+      lessonDirectorDecision = await runStage("lesson_director", () => {
+        const decision = decideLesson({
           ...input.classroom!.lessonDirector!,
           now: currentIso(this.config.now),
-        }),
-      );
+        });
+
+        return applyResumeLessonOpening(decision, input);
+      });
     }
 
     if (input.classroom?.scene) {
@@ -811,6 +985,16 @@ export class TeachingBrainRuntime {
 
     if (this.config.applyDecisionActions) {
       await runStage("apply_decision", () => {
+        if (directorOwnsOpening) {
+          actions.push({
+            action: "record_only",
+            applied: false,
+            reason:
+              "The legacy Decision Engine action was suppressed because the Lesson Director controls the new-lesson introduction.",
+          });
+          return;
+        }
+
         if (attemptLimitRecovered) {
           actions.push({
             action: "record_only",
@@ -835,9 +1019,12 @@ export class TeachingBrainRuntime {
 
     let completion: LessonCompletionEvaluation | undefined;
     if (
-      this.config.evaluateCompletionAfterEveryTurn ||
-      input.finalCompletionCheck ||
-      decision.decision.type === "complete_lesson"
+      !directorOwnsOpening &&
+      (
+        this.config.evaluateCompletionAfterEveryTurn ||
+        input.finalCompletionCheck ||
+        decision.decision.type === "complete_lesson"
+      )
     ) {
       completion = await runStage("evaluate_completion", () =>
         this.lessonCompletion.evaluate({
@@ -1174,12 +1361,30 @@ export class TeachingBrainRuntime {
       }
 
       case "complete_stage": {
-        engine.completeStage(action.reason, decision.createdAt);
-        actions.push({
-          action: "complete_stage",
-          applied: true,
-          reason: action.reason,
-        });
+        try {
+          engine.completeStage(action.reason, decision.createdAt);
+          actions.push({
+            action: "complete_stage",
+            applied: true,
+            reason: action.reason,
+          });
+        } catch (error) {
+          if (!isStageNotCompleteError(error)) {
+            throw error;
+          }
+
+          actions.push({
+            action: "complete_stage",
+            applied: false,
+            reason:
+              "The stage completion decision was not applied because the stage completion rule is not satisfied yet.",
+            details: {
+              stageId: state.activeStageId,
+              originalActivityId,
+              decisionId: decision.id,
+            },
+          });
+        }
         return;
       }
 

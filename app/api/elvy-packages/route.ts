@@ -98,6 +98,7 @@ type DashboardLesson = {
   lessonPlanData?: Record<string, unknown>;
   recordBookData?: Record<string, unknown>;
   blueprintData?: Record<string, unknown>;
+  blueprintId?: string;
   teachingAssets?: unknown[];
 };
 
@@ -225,6 +226,91 @@ function findDashboardPackage(
   return null;
 }
 
+function asRecord(
+  value: unknown,
+): Record<string, unknown> {
+  return value &&
+    typeof value === "object" &&
+    !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function asRecordArray(
+  value: unknown,
+): Record<string, unknown>[] {
+  return Array.isArray(value)
+    ? value.filter(
+        (item): item is Record<string, unknown> =>
+          Boolean(item) &&
+          typeof item === "object" &&
+          !Array.isArray(item),
+      )
+    : [];
+}
+
+/**
+ * Preserves the complete executable Blueprint object while retaining the
+ * legacy `elvyBlueprint` stage array expected by the current Studio.
+ */
+function normalizeLessonBlueprint(
+  lesson: DashboardLesson,
+  lessonPlanData: Record<string, unknown>,
+) {
+  const storedBlueprint = asRecord(lesson.blueprintData);
+
+  const compatibilityStages =
+    Array.isArray(storedBlueprint.stages)
+      ? storedBlueprint.stages
+      : Array.isArray(lessonPlanData.elvyBlueprint)
+        ? lessonPlanData.elvyBlueprint
+        : [];
+
+  const completeBlueprint: Record<string, unknown> = {
+    ...storedBlueprint,
+    id:
+      String(
+        storedBlueprint.id ??
+          lesson.blueprintId ??
+          "",
+      ).trim() || undefined,
+    lessonId:
+      String(
+        storedBlueprint.lessonId ??
+          lesson.id ??
+          "",
+      ).trim(),
+    stages: compatibilityStages,
+    objectives: asRecordArray(storedBlueprint.objectives),
+    nativeLanguageSupport:
+      asRecord(storedBlueprint.nativeLanguageSupport),
+    adaptation:
+      asRecord(storedBlueprint.adaptation),
+    lessonCompletionRule:
+      asRecord(storedBlueprint.lessonCompletionRule),
+    teachingRules:
+      asRecord(storedBlueprint.teachingRules),
+  };
+
+  return {
+    completeBlueprint,
+    compatibilityStages,
+    executable: Boolean(
+      completeBlueprint.objectives &&
+        Array.isArray(completeBlueprint.objectives) &&
+        completeBlueprint.objectives.length > 0 &&
+        compatibilityStages.some((stage) => {
+          const stageRecord = asRecord(stage);
+          return (
+            String(stageRecord.stageId ?? "").trim() ||
+            (Array.isArray(stageRecord.scenes) &&
+              stageRecord.scenes.length > 0)
+          );
+        }),
+    ),
+  };
+}
+
 function findExactLessonContext(
   packageDetails: DashboardPackage,
   lessonId: string,
@@ -237,25 +323,18 @@ function findExactLessonContext(
 
       if (!lesson) continue;
 
-      const lessonPlanData =
-        lesson.lessonPlanData &&
-        typeof lesson.lessonPlanData === "object" &&
-        !Array.isArray(lesson.lessonPlanData)
-          ? lesson.lessonPlanData
-          : {};
+      const lessonPlanData = asRecord(
+        lesson.lessonPlanData,
+      );
 
-      const blueprintData =
-        lesson.blueprintData &&
-        typeof lesson.blueprintData === "object" &&
-        !Array.isArray(lesson.blueprintData)
-          ? lesson.blueprintData
-          : {};
-
-      const blueprintStages = Array.isArray(blueprintData.stages)
-        ? blueprintData.stages
-        : Array.isArray(lessonPlanData.elvyBlueprint)
-          ? lessonPlanData.elvyBlueprint
-          : [];
+      const {
+        completeBlueprint,
+        compatibilityStages,
+        executable,
+      } = normalizeLessonBlueprint(
+        lesson,
+        lessonPlanData,
+      );
 
       return {
         packageId: packageDetails.packageId,
@@ -283,8 +362,37 @@ function findExactLessonContext(
             !Array.isArray(lesson.recordBookData)
               ? lesson.recordBookData
               : {},
-          blueprintData,
-          elvyBlueprint: blueprintStages,
+          blueprintId:
+            String(
+              completeBlueprint.id ??
+                lesson.blueprintId ??
+                "",
+            ).trim() || undefined,
+
+          /*
+           * Complete executable Blueprint v1.4 object. This is the canonical
+           * source for the Lesson Plan Studio and Teaching Brain adapters.
+           */
+          blueprintData: completeBlueprint,
+
+          /*
+           * Compatibility stage array retained for existing Studio code and
+           * older schema-v1 packages.
+           */
+          elvyBlueprint: compatibilityStages,
+
+          executableBlueprint: executable,
+          blueprintObjectives:
+            completeBlueprint.objectives,
+          nativeLanguageSupport:
+            completeBlueprint.nativeLanguageSupport,
+          adaptation:
+            completeBlueprint.adaptation,
+          lessonCompletionRule:
+            completeBlueprint.lessonCompletionRule,
+          teachingRules:
+            completeBlueprint.teachingRules,
+
           teachingAssets: Array.isArray(lesson.teachingAssets)
             ? lesson.teachingAssets
             : [],
@@ -359,6 +467,10 @@ export async function GET(request: NextRequest) {
         syllabusId: selectedPackage.syllabusId,
         requestedLessonId: lessonId,
         returnedLessonId: lessonContext.lesson.id,
+        blueprintSchema:
+          lessonContext.lesson.executableBlueprint
+            ? "executable-v1.4"
+            : "legacy-v1",
         lessonContext,
       });
     }

@@ -73,6 +73,18 @@ const EMPTY_WHITEBOARD_CONTENT: MobileWhiteboardContent = {
   text: "",
 };
 
+function createWelcomeWhiteboardContent(
+  studentName: string,
+): MobileWhiteboardContent {
+  const cleanName = String(studentName || "Student").trim() || "Student";
+
+  return {
+    title: `Welcome, ${cleanName}!`,
+    type: "paragraph",
+    text: "Welcome to your class.",
+  };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -416,7 +428,11 @@ export default function MobileElvyPage() {
           setActiveUserCode(parsedStudent.code);
           setRepliesLeft(0);
           setSecondsRemaining(Number(parsedStudent.secondsRemaining || 0));
-          setWhiteboardContent(EMPTY_WHITEBOARD_CONTENT);
+          setWhiteboardContent(
+            createWelcomeWhiteboardContent(
+              parsedStudent.name || parsedStudent.username,
+            ),
+          );
 
           const savedDirectorState = localStorage.getItem(
             ELVY_LESSON_DIRECTOR_STATE_KEY,
@@ -784,7 +800,9 @@ export default function MobileElvyPage() {
     setActiveUserCode(student.code);
     setRepliesLeft(0);
     setSecondsRemaining(Number(student.secondsRemaining || 0));
-    setWhiteboardContent(EMPTY_WHITEBOARD_CONTENT);
+    setWhiteboardContent(
+      createWelcomeWhiteboardContent(student.name || student.username),
+    );
     setShowTicketInfo(false);
     setShowAccountForm(false);
     setShowWelcome(false);
@@ -1608,6 +1626,18 @@ export default function MobileElvyPage() {
           studentProfile: studentProfile || null,
           lessonDirectorState:
             studentModeAllowed ? lessonDirectorState : null,
+          classroom:
+            studentModeAllowed
+              ? {
+                  whiteboard: {
+                    viewport: {
+                      width: 264,
+                      height: 271,
+                    },
+                    activePageIndex: 0,
+                  },
+                }
+              : null,
           recentMessages: [
             ...messages,
             {

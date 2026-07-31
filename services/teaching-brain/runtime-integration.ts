@@ -24,6 +24,22 @@ import {
   type StudentLessonAssignment,
 } from "./student-lesson-resolver";
 
+import {
+  defineScene,
+  type SceneContentKind,
+  type SceneDefinition,
+} from "./scene-definition";
+import { createSceneEngineState } from "./scene-engine";
+
+import type {
+  ConfidenceLevel,
+  LessonDirectorContext,
+  LessonStage,
+  ObjectiveStatus,
+  SupportLevel,
+  WhiteboardMode,
+} from "./lesson-director-types";
+
 /* -------------------------------------------------------------------------- */
 /*                                  Contracts                                 */
 /* -------------------------------------------------------------------------- */
@@ -33,6 +49,11 @@ export type RuntimeTurnModality =
   | "voice"
   | "choice"
   | "none";
+
+export type RuntimeLessonEntryMode =
+  | "new"
+  | "resume"
+  | "continue";
 
 export type ProcessStudentTeachingTurnInput = Readonly<{
   assignment: StudentLessonAssignment;
@@ -49,6 +70,13 @@ export type ProcessStudentTeachingTurnInput = Readonly<{
    * continues without Lesson Director, Scene Engine, or whiteboard output.
    */
   classroom?: TeachingTurnClassroomRuntimeInput;
+
+  /**
+   * Set to true only for the first turn after an unfinished lesson has been
+   * restored following logout, disconnect, or classroom re-entry.
+   * Do not set this on every normal turn that carries an existing session.
+   */
+  resumeLesson?: boolean;
 
   message?: string;
   normalizedMessage?: string;
@@ -405,6 +433,504 @@ function buildLearnerTurn(input: {
   };
 }
 
+
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function readText(
+  record: Record<string, unknown>,
+  ...keys: string[]
+): string | undefined {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+function readNumber(
+  record: Record<string, unknown>,
+  ...keys: string[]
+): number | undefined {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function normalizeLessonStage(value: unknown): LessonStage {
+  const normalized = clean(value)
+    .toLowerCase()
+    .replace(/_/g, "-")
+    .replace(/\s+/g, "-");
+
+  const stages: readonly LessonStage[] = [
+    "welcome",
+    "warm-up",
+    "objective",
+    "presentation",
+    "vocabulary",
+    "grammar",
+    "reading",
+    "listening",
+    "dialogue",
+    "guided-practice",
+    "independent-practice",
+    "production",
+    "review",
+    "assessment",
+    "complete",
+  ];
+
+  return stages.includes(normalized as LessonStage)
+    ? (normalized as LessonStage)
+    : "presentation";
+}
+
+function normalizeObjectiveStatus(value: unknown): ObjectiveStatus {
+  const normalized = clean(value)
+    .toLowerCase()
+    .replace(/_/g, "-")
+    .replace(/\s+/g, "-");
+
+  if (
+    normalized === "achieved" ||
+    normalized === "mastered" ||
+    normalized === "completed"
+  ) {
+    return "achieved";
+  }
+
+  if (
+    normalized === "needs-review" ||
+    normalized === "review" ||
+    normalized === "struggling"
+  ) {
+    return "needs-review";
+  }
+
+  if (
+    normalized === "in-progress" ||
+    normalized === "active" ||
+    normalized === "started"
+  ) {
+    return "in-progress";
+  }
+
+  return "not-started";
+}
+
+function normalizeSupportLevel(value: unknown): SupportLevel {
+  const normalized = clean(value).toLowerCase();
+  if (
+    normalized === "light" ||
+    normalized === "guided" ||
+    normalized === "full"
+  ) {
+    return normalized;
+  }
+  return "none";
+}
+
+function normalizeConfidence(value: unknown): ConfidenceLevel {
+  const normalized = clean(value).toLowerCase();
+  if (
+    normalized === "low" ||
+    normalized === "medium" ||
+    normalized === "high"
+  ) {
+    return normalized;
+  }
+  return "unknown";
+}
+
+function buildLessonDirectorInput(input: {
+  resolved: ResolvedStudentLesson;
+  session: TeachingSessionState;
+  occurredAt: string;
+  entryMode: RuntimeLessonEntryMode;
+  learnerName?: string;
+  nativeLanguage?: LanguageCode;
+}): Omit<LessonDirectorContext, "now"> {
+  const {
+    resolved,
+    session,
+    occurredAt,
+    entryMode,
+    learnerName,
+    nativeLanguage,
+  } = input;
+
+  const sessionRecord = asRecord(session);
+  const sessionMetadata = asRecord(sessionRecord.metadata);
+  const objectiveStates = asRecord(
+    sessionRecord.objectiveStates ?? sessionRecord.objectiveProgress,
+  );
+  const activityStates = asRecord(sessionRecord.activityStates);
+
+  const activeStageId =
+    clean(session.activeStageId) ||
+    readText(sessionRecord, "currentStageId", "stageId") ||
+    `${resolved.lessonId}:welcome`;
+
+  const activeActivityId =
+    clean(session.activeActivityId) ||
+    readText(sessionRecord, "currentActivityId", "activityId") ||
+    `${resolved.lessonId}:opening`;
+
+  const activeStage = resolved.teachingBrainLesson.stages.find(
+    (stage) => stage.id === session.activeStageId,
+  );
+  const activeStageRecord = asRecord(activeStage);
+
+  const stage =
+    entryMode === "new"
+      ? "welcome"
+      : normalizeLessonStage(
+          activeStageRecord.type ??
+            activeStageRecord.stage ??
+            activeStageRecord.category ??
+            activeStageRecord.title ??
+            activeStageId,
+        );
+
+  const activeActivityState = asRecord(activityStates[activeActivityId]);
+
+  const objectiveProgress =
+    resolved.teachingBrainLesson.objectives.map((objective) => {
+      const objectiveRecord = asRecord(objective);
+      const objectiveId =
+        readText(objectiveRecord, "id", "objectiveId") ??
+        `${resolved.lessonId}:objective`;
+
+      const stored = asRecord(objectiveStates[objectiveId]);
+      const score =
+        readNumber(stored, "score", "masteryScore", "progress") ?? 0;
+      const evidenceCount =
+        readNumber(stored, "evidenceCount", "evidence_count") ?? 0;
+      const requiredEvidenceCount =
+        readNumber(
+          stored,
+          "requiredEvidenceCount",
+          "required_evidence_count",
+        ) ?? 1;
+
+      return {
+        objectiveId,
+        description:
+          readText(objectiveRecord, "description", "title", "text") ??
+          resolved.lessonTitle,
+        status: normalizeObjectiveStatus(
+          stored.status ?? stored.state ?? stored.masteryStatus,
+        ),
+        score,
+        evidenceCount,
+        requiredEvidenceCount,
+        lastEvidenceAt: readText(
+          stored,
+          "lastEvidenceAt",
+          "last_evidence_at",
+        ),
+      };
+    });
+
+  const attemptsInCurrentTask =
+    readNumber(
+      activeActivityState,
+      "attempts",
+      "attemptCount",
+      "attempt_count",
+    ) ?? 0;
+
+  const startedAt =
+    readText(sessionRecord, "startedAt", "createdAt") ?? occurredAt;
+  const updatedAt =
+    readText(sessionRecord, "updatedAt", "lastActivityAt") ?? occurredAt;
+
+  return {
+    lessonState: {
+      lesson: {
+        lessonId: resolved.teachingBrainLesson.id,
+        packageId: resolved.packageId,
+        courseId: resolved.syllabusId,
+        level: resolved.levelId,
+        sublevel: resolved.sublevelId,
+        unitId: resolved.unitId,
+        lessonTitle: resolved.lessonTitle,
+        version: resolved.packageVersion,
+      },
+      sessionId: session.id,
+      startedAt,
+      updatedAt,
+      currentStage: stage,
+      currentSceneId:
+        entryMode === "new" ? `${resolved.lessonId}:opening` : activeStageId,
+      currentSceneStatus:
+        entryMode === "new" ? "not-started" : "active",
+      sceneHistory: [],
+      objectiveProgress,
+      studentState: {
+        studentId: session.learnerId,
+        displayName: clean(learnerName) || undefined,
+        attemptsInCurrentTask,
+        totalAttemptsInScene: attemptsInCurrentTask,
+        supportLevel: normalizeSupportLevel(
+          activeActivityState.currentSupportLevel ??
+            activeActivityState.supportLevel,
+        ),
+        confidence: normalizeConfidence(
+          sessionMetadata.confidence ??
+            activeActivityState.confidence,
+        ),
+        recentErrors: [],
+        strengths: [],
+        needsSupportWith: [],
+        preferredLanguage:
+          clean(nativeLanguage) ||
+          readText(sessionMetadata, "nativeLanguage", "preferredLanguage"),
+      },
+      waitingFor:
+        entryMode === "new" ? "none" : "student-answer",
+      elapsedSeconds:
+        readNumber(sessionRecord, "elapsedSeconds", "elapsed_seconds") ?? 0,
+      paused: false,
+      completed: false,
+      nextAllowedActions:
+        entryMode === "new"
+          ? ["start-lesson"]
+          : entryMode === "resume"
+            ? ["resume", "continue-scene", "ask-student"]
+            : ["continue-scene", "ask-student"],
+    },
+    lessonPackage: resolved.lessonPlan,
+    teachingPolicy: {
+      maxAttemptsBeforeHint: 2,
+      maxAttemptsBeforeModel: 3,
+      maxAttemptsBeforeReview: 4,
+      minimumObjectiveScore: 0.7,
+      requiredEvidencePerObjective: 1,
+      allowSceneSkipping: true,
+      allowObjectiveSkipping: false,
+      requireStudentResponseBeforeAdvance: true,
+      languageSupportPolicy: {
+        allowL1Support: Boolean(nativeLanguage && nativeLanguage !== "en"),
+        supportLanguage: nativeLanguage,
+        triggerAfterAttempts: 2,
+      },
+    },
+  };
+}
+
+type DynamicWhiteboardSource = Readonly<{
+  stage: LessonStage;
+  mode: WhiteboardMode;
+  kind: SceneContentKind;
+  packagePath: string;
+  title: string;
+  description: string;
+  category: "instruction" | "practice" | "assessment";
+  allowScroll: boolean;
+}>;
+
+function hasContent(value: unknown): boolean {
+  if (typeof value === "string") return value.trim().length > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  return value !== undefined && value !== null;
+}
+
+function readArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function resolveDynamicWhiteboardSource(
+  resolved: ResolvedStudentLesson,
+  session: TeachingSessionState,
+  entryMode: RuntimeLessonEntryMode,
+): DynamicWhiteboardSource {
+  const lessonPlan = asRecord(resolved.lessonPlan);
+  const lessonStages = readArray(lessonPlan.stages);
+  const blueprintStages = readArray(lessonPlan.elvyBlueprint);
+
+  const stageIndex = Math.max(
+    0,
+    resolved.teachingBrainLesson.stages.findIndex(
+      (stage) => stage.id === session.activeStageId,
+    ),
+  );
+
+  const activeStage =
+    resolved.teachingBrainLesson.stages[stageIndex] ??
+    resolved.teachingBrainLesson.stages[0];
+
+  const activeStageRecord = asRecord(activeStage);
+  const normalizedStage =
+    entryMode === "new"
+      ? "objective"
+      : normalizeLessonStage(
+          activeStageRecord.type ??
+            activeStageRecord.stage ??
+            activeStageRecord.category ??
+            activeStageRecord.title ??
+            session.activeStageId,
+        );
+
+  const activities = readArray(activeStageRecord.activities);
+  const activityIndex = Math.max(
+    0,
+    activities.findIndex(
+      (activity) =>
+        readText(asRecord(activity), "id") === session.activeActivityId,
+    ),
+  );
+
+  const blueprintStage = asRecord(blueprintStages[stageIndex]);
+  const lessonStage = asRecord(lessonStages[stageIndex]);
+
+  const blueprintWhiteboardPath = hasContent(blueprintStage.whiteboardPlan)
+    ? `lessonPlan.elvyBlueprint.${stageIndex}.whiteboardPlan`
+    : undefined;
+
+  const activeActivityPath = activities.length > 0
+    ? `teachingBrainLesson.stages.${stageIndex}.activities.${activityIndex}`
+    : undefined;
+
+  const stageStudentPath = hasContent(lessonStage.studentActivities)
+    ? `lessonPlan.stages.${stageIndex}.studentActivities`
+    : undefined;
+
+  const stageTeacherPath = hasContent(lessonStage.teacherActivities)
+    ? `lessonPlan.stages.${stageIndex}.teacherActivities`
+    : undefined;
+
+  const firstAvailable = (...paths: Array<string | undefined>): string =>
+    paths.find((path): path is string => Boolean(path)) ??
+    "lessonPlan.lessonObjectives";
+
+  if (entryMode === "new") {
+    return { stage: "objective", mode: "objective", kind: "lesson-objectives", packagePath: "lessonPlan.lessonObjectives", title: resolved.lessonTitle, description: "Display the lesson objectives before teaching begins.", category: "instruction", allowScroll: false };
+  }
+
+  switch (normalizedStage) {
+    case "welcome":
+    case "warm-up":
+      return { stage: normalizedStage, mode: "question", kind: "warm-up-prompt", packagePath: firstAvailable(blueprintWhiteboardPath, activeActivityPath, stageStudentPath, "lessonPlan.prerequisites"), title: readText(activeStageRecord, "title", "name") ?? "Warm-up", description: "Display the active warm-up prompt.", category: "instruction", allowScroll: false };
+    case "vocabulary":
+      return { stage: normalizedStage, mode: "vocabulary", kind: "vocabulary-set", packagePath: hasContent(lessonPlan.vocabulary) ? "lessonPlan.vocabulary" : firstAvailable(blueprintWhiteboardPath, activeActivityPath, stageTeacherPath), title: "Vocabulary", description: "Display the vocabulary for the active lesson stage.", category: "instruction", allowScroll: true };
+    case "grammar":
+      return { stage: normalizedStage, mode: "grammar", kind: "grammar-point", packagePath: hasContent(lessonPlan.grammar) ? "lessonPlan.grammar" : firstAvailable(blueprintWhiteboardPath, activeActivityPath, stageTeacherPath), title: "Grammar", description: "Display the active grammar point and examples.", category: "instruction", allowScroll: true };
+    case "reading":
+      return { stage: normalizedStage, mode: "reading", kind: "reading-text", packagePath: firstAvailable(blueprintWhiteboardPath, activeActivityPath, stageStudentPath), title: readText(activeStageRecord, "title", "name") ?? "Reading", description: "Display the reading content for the active stage.", category: "instruction", allowScroll: true };
+    case "listening":
+      return { stage: normalizedStage, mode: "listening", kind: "listening-script", packagePath: firstAvailable(blueprintWhiteboardPath, activeActivityPath, stageStudentPath), title: readText(activeStageRecord, "title", "name") ?? "Listening", description: "Display the listening support for the active stage.", category: "instruction", allowScroll: true };
+    case "dialogue":
+      return { stage: normalizedStage, mode: "dialogue", kind: "dialogue", packagePath: hasContent(lessonPlan.usefulExpressions) ? "lessonPlan.usefulExpressions" : firstAvailable(blueprintWhiteboardPath, activeActivityPath, stageStudentPath), title: "Dialogue", description: "Display the active classroom dialogue.", category: "practice", allowScroll: true };
+    case "guided-practice":
+    case "independent-practice":
+    case "production":
+      return { stage: normalizedStage, mode: "exercise", kind: normalizedStage === "production" ? "speaking-prompt" : "exercise", packagePath: firstAvailable(activeActivityPath, blueprintWhiteboardPath, stageStudentPath), title: readText(activeStageRecord, "title", "name") ?? "Your turn", description: "Display only the current learner task.", category: "practice", allowScroll: false };
+    case "assessment":
+      return { stage: normalizedStage, mode: "question", kind: "assessment-item", packagePath: hasContent(lessonStage.assessment) ? `lessonPlan.stages.${stageIndex}.assessment` : firstAvailable(activeActivityPath, "lessonPlan.formativeAssessment", "lessonPlan.summativeAssessment"), title: "Check your learning", description: "Display the active assessment task.", category: "assessment", allowScroll: false };
+    case "review":
+    case "complete":
+      return { stage: normalizedStage, mode: "summary", kind: "review-summary", packagePath: hasContent(lessonPlan.outcomes) ? "lessonPlan.outcomes" : firstAvailable(blueprintWhiteboardPath, "lessonPlan.successCriteria", stageTeacherPath), title: normalizedStage === "complete" ? "Lesson complete" : "Review", description: "Display the lesson review and key learning.", category: "instruction", allowScroll: true };
+    case "objective":
+      return { stage: normalizedStage, mode: "objective", kind: "lesson-objectives", packagePath: "lessonPlan.lessonObjectives", title: resolved.lessonTitle, description: "Display the lesson objectives.", category: "instruction", allowScroll: false };
+    case "presentation":
+    default:
+      return { stage: normalizedStage, mode: "instructions", kind: "instructions", packagePath: firstAvailable(blueprintWhiteboardPath, activeActivityPath, stageTeacherPath, stageStudentPath), title: readText(activeStageRecord, "title", "name") ?? resolved.lessonTitle, description: "Display the content for the active teaching stage.", category: "instruction", allowScroll: true };
+  }
+}
+
+function buildResolvedLessonClassroom(
+  resolved: ResolvedStudentLesson,
+  session: TeachingSessionState,
+  supplied: TeachingTurnClassroomRuntimeInput | undefined,
+  occurredAt: string,
+  entryMode: RuntimeLessonEntryMode,
+  learnerName?: string,
+  nativeLanguage?: LanguageCode,
+): TeachingTurnClassroomRuntimeInput | undefined {
+  if (!supplied) return undefined;
+
+  const lessonDirector =
+    supplied.lessonDirector ??
+    buildLessonDirectorInput({ resolved, session, occurredAt, entryMode, learnerName, nativeLanguage });
+
+  const packageRoot = {
+    lessonPlan: resolved.lessonPlan,
+    teachingBrainLesson: resolved.teachingBrainLesson,
+  };
+
+  if (supplied.scene) {
+    return {
+      ...supplied,
+      lessonDirector,
+      whiteboard: {
+        ...supplied.whiteboard,
+        packageRoot: supplied.whiteboard?.packageRoot ?? packageRoot,
+      },
+    };
+  }
+
+  const source = resolveDynamicWhiteboardSource(resolved, session, entryMode);
+
+  const sceneDefinition: Readonly<SceneDefinition> = defineScene({
+    id: `${resolved.lessonId}:${session.activeStageId}:lesson-board`,
+    version: resolved.packageVersion || "1.0",
+    stage: source.stage,
+    category: source.category,
+    title: source.title,
+    description: source.description,
+    requirement: "required",
+    order: 1,
+    objectiveIds: resolved.teachingBrainLesson.objectives.map((objective) => objective.id),
+    contentReferences: [
+      { id: "lesson-title", kind: "lesson-title", packagePath: "lessonPlan.lessonTitle", required: true },
+      { id: "active-stage-content", kind: source.kind, packagePath: source.packagePath, required: false, metadata: { stageId: session.activeStageId ?? "", activityId: session.activeActivityId ?? "", dynamic: true } },
+    ],
+    steps: [
+      {
+        id: `${resolved.lessonId}:${session.activeActivityId}:display-board`,
+        order: 1,
+        kind: "display",
+        title: source.title,
+        description: source.description,
+        required: true,
+        whiteboard: {
+          mode: source.mode,
+          titleReferenceId: "lesson-title",
+          contentReferenceId: "active-stage-content",
+          clearBeforeDisplay: entryMode === "new",
+          allowScroll: source.allowScroll,
+        },
+      },
+    ],
+    completionRules: [{ type: "all-required-steps-completed" }],
+    transitionRules: [],
+    supportRules: [],
+    estimatedMinutes: 1,
+    skippable: false,
+    repeatable: true,
+    tags: ["runtime-generated", "dynamic-whiteboard", source.stage],
+  });
+
+  return {
+    ...supplied,
+    lessonDirector,
+    scene: { definition: sceneDefinition, state: createSceneEngineState(sceneDefinition, occurredAt), event: { type: "start", now: occurredAt } },
+    whiteboard: { ...supplied.whiteboard, packageRoot: supplied.whiteboard?.packageRoot ?? packageRoot },
+  };
+}
+
 /* -------------------------------------------------------------------------- */
 /*                            Integration service                             */
 /* -------------------------------------------------------------------------- */
@@ -441,6 +967,12 @@ export class TeachingRuntimeIntegration {
         input.assignment,
       );
 
+      const entryMode: RuntimeLessonEntryMode = input.resumeLesson
+        ? "resume"
+        : input.session
+          ? "continue"
+          : "new";
+
       const inputSession = createOrRestoreActiveSession({
         resolved,
         assignment: input.assignment,
@@ -470,7 +1002,17 @@ export class TeachingRuntimeIntegration {
         lesson: resolved.teachingBrainLesson,
         session: inputSession,
         learnerTurn,
-        classroom: input.classroom,
+        classroom: buildResolvedLessonClassroom(
+          resolved,
+          inputSession,
+          input.classroom,
+          occurredAt,
+          entryMode,
+          clean(input.learnerName) ||
+            clean(input.assignment.studentName) ||
+            undefined,
+          resolveAssignmentNativeLanguage(input.assignment),
+        ),
         previousEvaluations: input.previousEvaluations,
         learnerName:
           clean(input.learnerName) ||
@@ -492,6 +1034,17 @@ export class TeachingRuntimeIntegration {
           syllabusId: resolved.syllabusId,
           unitId: resolved.unitId,
           sourceLessonId: resolved.lessonId,
+          lessonEntryMode: entryMode,
+          lessonResumed: entryMode === "resume",
+          lessonIntroductionCompleted: entryMode !== "new",
+          resumeMainObjective:
+            readText(
+              asRecord(resolved.teachingBrainLesson.objectives[0]),
+              "text",
+              "title",
+              "label",
+              "name",
+            ) ?? resolved.lessonTitle,
         },
       });
 

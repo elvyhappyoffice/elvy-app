@@ -22,18 +22,18 @@ function getTextSizeClass(text: string) {
   const length = text.trim().length;
 
   if (length <= 140) {
-    return "text-[19px] leading-8";
+    return "text-[16px] leading-[1.55rem]";
   }
 
   if (length <= 320) {
-    return "text-[17px] leading-7";
+    return "text-[15px] leading-[1.45rem]";
   }
 
   if (length <= 560) {
-    return "text-[15px] leading-6";
+    return "text-[14px] leading-[1.35rem]";
   }
 
-  return "text-[14px] leading-[1.45rem]";
+  return "text-[13px] leading-[1.25rem]";
 }
 
 function renderHighlightedText(
@@ -90,20 +90,20 @@ export default function Whiteboard({
 
   return (
     <section
-      className={`flex h-full w-full flex-col overflow-hidden px-4 py-3 text-[#202020] ${className}`}
+      className={`flex h-full w-full flex-col overflow-hidden px-3 py-2.5 text-[#202020] ${className}`}
       aria-label="Lesson whiteboard"
       data-content-type={type}
     >
       {title && (
-        <header className="shrink-0 border-b border-[#b9c4cc] pb-2 text-center">
-          <h2 className="text-[18px] font-extrabold text-[#1670b9]">
+        <header className="shrink-0 border-b border-[#b9c4cc] pb-1.5 text-center">
+          <h2 className="mx-auto max-w-[95%] text-[16px] font-extrabold leading-[1.25rem] text-[#1670b9]">
             {title}
           </h2>
         </header>
       )}
 
       <div
-        className={`min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap break-words pt-3 text-left font-medium [scrollbar-width:thin] ${textSizeClass}`}
+        className={`min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap break-words pt-2 text-left font-medium [scrollbar-width:thin] ${textSizeClass}`}
         aria-live="polite"
       >
         {renderHighlightedText(

@@ -338,19 +338,397 @@ function normalizeHighlights(
   });
 }
 
+
+function splitIntoReadableItems(value: string): string[] {
+  return value
+    .split(/\r?\n|(?<=[.!?])\s+/)
+    .map((item) => item.replace(/^[-•*\d.)\s]+/, "").trim())
+    .filter(Boolean);
+}
+
+function shortenText(value: string, maxLength = 180): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) return normalized;
+
+  const sentence = normalized
+    .slice(0, maxLength + 1)
+    .replace(/\s+\S*$/, "")
+    .trim();
+
+  return `${sentence || normalized.slice(0, maxLength).trim()}…`;
+}
+
+const INTERNAL_PLACEHOLDER_PATTERNS = [
+  /^lesson title$/i,
+  /^today'?s goal$/i,
+  /^one visual or recall question$/i,
+  /^visual or recall question$/i,
+  /^lesson objective(?:s)?$/i,
+  /^activity instructions?$/i,
+  /^teacher note(?:s)?$/i,
+  /^whiteboard content$/i,
+];
+
+function isInternalPlaceholder(value: unknown): boolean {
+  const normalized = String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return (
+    !normalized ||
+    INTERNAL_PLACEHOLDER_PATTERNS.some((pattern) => pattern.test(normalized))
+  );
+}
+
+function learnerFacingText(value: unknown): string {
+  const normalized = String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!normalized || isInternalPlaceholder(normalized)) return "";
+
+  return normalized
+    .replace(/^key words?\s*:\s*/i, "")
+    .replace(/^target pattern\s*:\s*/i, "")
+    .replace(/^model one answer\.?\s*/i, "Look at the example. ")
+    .replace(/^offer two choices\.?$/i, "Choose one answer.")
+    .replace(/^one visual or recall question\.?$/i, "")
+    .trim();
+}
+
+function learnerFacingTitle(
+  title: unknown,
+  mode: WhiteboardMode,
+): string | undefined {
+  const cleaned = learnerFacingText(title);
+
+  if (cleaned) return cleaned;
+
+  switch (mode) {
+    case "objective":
+      return "Today’s lesson";
+    case "vocabulary":
+      return "New words";
+    case "dialogue":
+      return "Listen and read";
+    case "question":
+    case "exercise":
+    case "instructions":
+      return "Your turn";
+    case "feedback":
+      return "Let’s try again";
+    case "grammar":
+      return "Language focus";
+    case "reading":
+      return "Read";
+    case "listening":
+      return "Listen";
+    case "summary":
+      return "Let’s review";
+    case "title":
+      return undefined;
+    default:
+      return cleaned || undefined;
+  }
+}
+
+function sanitizeListItems(
+  items: readonly WhiteboardListItem[] | undefined,
+  maxItems: number,
+  maxTextLength: number,
+): WhiteboardListItem[] | undefined {
+  if (!items?.length) return undefined;
+
+  const sanitized = items.flatMap<WhiteboardListItem>((item) => {
+    const text = learnerFacingText(item.text);
+    if (!text) return [];
+
+    const secondaryText = learnerFacingText(item.secondaryText);
+    const example = learnerFacingText(item.example);
+    const translation = learnerFacingText(item.translation);
+
+    return [{
+      ...item,
+      text: shortenText(text, maxTextLength),
+      ...(secondaryText
+        ? { secondaryText: shortenText(secondaryText, Math.max(70, maxTextLength - 10)) }
+        : {}),
+      ...(example
+        ? { example: shortenText(example, Math.max(90, maxTextLength)) }
+        : {}),
+      ...(translation
+        ? { translation: shortenText(translation, Math.max(70, maxTextLength - 10)) }
+        : {}),
+    }];
+  }).slice(0, maxItems);
+
+  return sanitized.length > 0 ? sanitized : undefined;
+}
+
+function normalizeObjectiveBlocks(
+  blocks: readonly WhiteboardBlock[],
+  step: Readonly<SceneStepDefinition>,
+): WhiteboardBlock[] {
+  const items: WhiteboardListItem[] = [];
+
+  for (const block of blocks) {
+    for (const item of block.items ?? []) {
+      const itemText = learnerFacingText(item.text);
+
+      if (itemText) {
+        items.push({
+          ...item,
+          text: shortenText(itemText, 120),
+          secondaryText: learnerFacingText(item.secondaryText)
+            ? shortenText(learnerFacingText(item.secondaryText), 100)
+            : undefined,
+        });
+      }
+    }
+
+    const sourceText = [block.title, block.text]
+      .map(learnerFacingText)
+      .filter(Boolean)
+      .join(". ");
+
+    for (const sentence of splitIntoReadableItems(sourceText)) {
+      const objective = learnerFacingText(sentence);
+      if (!objective) continue;
+
+      items.push({
+        id: `${block.id}:objective:${items.length + 1}`,
+        text: shortenText(
+          objective
+            .replace(/^by the end of (?:this|the) lesson,?\s*(?:learners?|students?)\s+can\s+/i, "")
+            .replace(/^(?:learners?|students?)\s+can\s+/i, ""),
+          120,
+        ),
+      });
+    }
+  }
+
+  const uniqueItems = items.filter(
+    (item, index, all) =>
+      all.findIndex(
+        (candidate) =>
+          candidate.text.toLowerCase() === item.text.toLowerCase(),
+      ) === index,
+  );
+
+  if (uniqueItems.length === 0) {
+    return buildEmptyBlocks("objective", step);
+  }
+
+  return [
+    {
+      id: `objectives:${step.id}`,
+      kind: "list",
+      title: "Today we will learn:",
+      items: uniqueItems.slice(0, 4),
+      alignment: "left",
+      emphasis: "normal",
+      metadata: {
+        dynamic: true,
+        source: "lesson-objectives",
+        audience: "learner",
+      },
+    },
+  ];
+}
+
+function normalizeVocabularyBlocks(
+  blocks: readonly WhiteboardBlock[],
+): WhiteboardBlock[] {
+  return blocks.flatMap<WhiteboardBlock>((block) => {
+    const text = learnerFacingText(block.text);
+    const items = sanitizeListItems(block.items, 8, 60);
+
+    if (!text && !items?.length && !block.dialogue?.length && !block.image) {
+      return [];
+    }
+
+    return [{
+      ...block,
+      kind: "vocabulary",
+      ...(learnerFacingTitle(block.title, "vocabulary")
+        ? { title: learnerFacingTitle(block.title, "vocabulary") }
+        : {}),
+      ...(items ? { items } : {}),
+      ...(text ? { text: shortenText(text, 180) } : {}),
+      metadata: {
+        ...block.metadata,
+        audience: "learner",
+      },
+    }];
+  });
+}
+
+function normalizeDialogueBlocks(
+  blocks: readonly WhiteboardBlock[],
+): WhiteboardBlock[] {
+  return blocks.flatMap<WhiteboardBlock>((block) => {
+    const dialogue = block.dialogue
+      ?.slice(0, 6)
+      .map((line) => ({
+        ...line,
+        text: shortenText(learnerFacingText(line.text), 100),
+        ...(learnerFacingText(line.translation)
+          ? { translation: shortenText(learnerFacingText(line.translation), 90) }
+          : {}),
+      }))
+      .filter((line) => Boolean(line.text));
+
+    const text = learnerFacingText(block.text);
+
+    if (!dialogue?.length && !text && !block.image) {
+      return [];
+    }
+
+    const title = learnerFacingTitle(block.title, "dialogue");
+
+    return [{
+      ...block,
+      kind: dialogue?.length ? "dialogue" : block.kind,
+      ...(title ? { title } : {}),
+      ...(dialogue?.length ? { dialogue } : {}),
+      ...(text ? { text: shortenText(text, 180) } : {}),
+      metadata: {
+        ...block.metadata,
+        audience: "learner",
+      },
+    }];
+  });
+}
+
+function normalizePracticeBlocks(
+  blocks: readonly WhiteboardBlock[],
+  mode: WhiteboardMode,
+): WhiteboardBlock[] {
+  return blocks.slice(0, 3).flatMap<WhiteboardBlock>((block, index) => {
+    const text = learnerFacingText(block.text);
+    const items = sanitizeListItems(block.items, 5, 90);
+
+    if (!text && !items?.length && !block.dialogue?.length && !block.image) {
+      return [];
+    }
+
+    const title =
+      learnerFacingTitle(block.title, mode) ??
+      (index === 0
+        ? mode === "feedback"
+          ? "Let’s try again"
+          : "Your turn"
+        : undefined);
+
+    return [{
+      ...block,
+      kind:
+        mode === "question"
+          ? "question"
+          : mode === "feedback"
+            ? "feedback"
+            : "exercise",
+      ...(title ? { title } : {}),
+      ...(text ? { text: shortenText(text, 150) } : {}),
+      ...(items ? { items } : {}),
+      metadata: {
+        ...block.metadata,
+        audience: "learner",
+      },
+    }];
+  });
+}
+
+function buildDynamicBlocks(
+  mode: WhiteboardMode,
+  resolvedBlocks: readonly WhiteboardBlock[],
+  step: Readonly<SceneStepDefinition>,
+): WhiteboardBlock[] {
+  const visible = resolvedBlocks
+    .filter((block) => block.visible !== false)
+    .map((block) => ({ ...block }));
+
+  switch (mode) {
+    case "objective":
+      return normalizeObjectiveBlocks(visible, step);
+    case "vocabulary":
+      return normalizeVocabularyBlocks(visible);
+    case "dialogue":
+      return normalizeDialogueBlocks(visible);
+    case "question":
+    case "exercise":
+    case "feedback":
+    case "instructions":
+      return normalizePracticeBlocks(visible, mode);
+    case "reading":
+    case "listening":
+    case "grammar":
+    case "summary":
+      return visible.flatMap<WhiteboardBlock>((block) => {
+        const text = learnerFacingText(block.text);
+        const items = sanitizeListItems(block.items, 6, 100);
+
+        if (!text && !items?.length && !block.dialogue?.length && !block.image) {
+          return [];
+        }
+
+        const title = learnerFacingTitle(block.title, mode);
+
+        return [{
+          ...block,
+          ...(title ? { title } : {}),
+          ...(text ? { text: shortenText(text, 260) } : {}),
+          ...(items ? { items } : {}),
+          metadata: {
+            ...block.metadata,
+            audience: "learner",
+          },
+        }];
+      });
+    case "title":
+      return visible.slice(0, 1).map((block) => ({
+        ...block,
+        alignment: "center",
+      }));
+    case "clear":
+      return [];
+    default:
+      return visible.length > 0 ? visible : buildEmptyBlocks(mode, step);
+  }
+}
+
 function buildEmptyBlocks(
   mode: WhiteboardMode,
   step: Readonly<SceneStepDefinition>,
 ): WhiteboardBlock[] {
   if (mode === "clear") return [];
 
+  const stepTitle = learnerFacingText(step.title);
+  const stepDescription = learnerFacingText(step.description);
+
   const placeholder: WhiteboardBlock = {
     id: `placeholder:${step.id}`,
-    kind: mode === "question" ? "question" : "heading",
-    title: step.title,
-    text: step.description,
+    kind:
+      mode === "question"
+        ? "question"
+        : mode === "exercise" || mode === "instructions"
+          ? "exercise"
+          : "heading",
+    title: learnerFacingTitle(stepTitle, mode),
+    text:
+      stepDescription ||
+      (mode === "objective"
+        ? "We will learn this lesson step by step."
+        : mode === "question" || mode === "exercise" || mode === "instructions"
+          ? "Listen to Elvy’s explanation, then try."
+          : undefined),
     alignment: mode === "title" ? "center" : "left",
     emphasis: "normal",
+    metadata: {
+      dynamic: true,
+      audience: "learner",
+      fallback: true,
+    },
   };
 
   return placeholder.title || placeholder.text ? [placeholder] : [];
@@ -432,16 +810,23 @@ export function buildWhiteboardPresentation(
     );
   }
 
-  const title =
+  const rawTitle =
     resolvedTitle?.title ??
     resolvedTitle?.blocks.find((block) => block.title || block.text)?.title ??
     resolvedTitle?.blocks.find((block) => block.title || block.text)?.text ??
     resolvedContent?.title ??
     context.step.title;
 
-  const blocks = (resolvedContent?.blocks ?? buildEmptyBlocks(mode, context.step))
-    .filter((block) => block.visible !== false)
-    .map((block) => ({ ...block }));
+  const title = learnerFacingTitle(rawTitle, mode);
+
+  const sourceBlocks =
+    resolvedContent?.blocks ?? buildEmptyBlocks(mode, context.step);
+
+  const blocks = buildDynamicBlocks(
+    mode,
+    sourceBlocks,
+    context.step,
+  );
 
   const hints = buildPresentationHints(
     mode,

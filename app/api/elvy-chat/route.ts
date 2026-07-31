@@ -725,6 +725,18 @@ function calculateInteractionSeconds(userMessage: string, elvyReply: string) {
   return 30;
 }
 
+function isGenericElvyFailureReply(value: unknown) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+
+  return [
+    "",
+    "i am sorry. i cannot reply right now.",
+    "i'm sorry. i cannot reply right now.",
+    "i am sorry, i cannot reply right now.",
+    "sorry, i cannot reply right now.",
+  ].includes(normalized);
+}
+
 type StudentTeachingRuntimeResult = ProcessStudentTeachingTurnOutput;
 
 function isTeachingSessionState(value: unknown): value is TeachingSessionState {
@@ -776,6 +788,12 @@ async function runStudentTeachingRuntime(
   return processStudentTeachingTurn({
     assignment,
     session: getTeachingSessionFromBody(body),
+    classroom:
+      body?.classroom &&
+      typeof body.classroom === "object" &&
+      !Array.isArray(body.classroom)
+        ? body.classroom
+        : undefined,
     sessionId:
       typeof body?.teachingSessionId === "string"
         ? body.teachingSessionId
@@ -1115,9 +1133,13 @@ export async function POST(req: Request) {
             maxOutputTokens: MAX_OUTPUT_TOKENS,
           });
 
-    const reply =
-      aiResponse.text ||
-      "I am sorry. I cannot reply right now.";
+    const generatedReply = String(aiResponse.text || "").trim();
+
+    const reply = isGenericElvyFailureReply(generatedReply)
+      ? isStudentMode
+        ? "Let us continue with the current lesson. Please try the activity once more."
+        : "Please try again in a moment."
+      : generatedReply;
 
     const secondsUsed = calculateInteractionSeconds(userMessage, reply);
 
